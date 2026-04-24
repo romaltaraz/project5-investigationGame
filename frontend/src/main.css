@@ -1,0 +1,5 @@
+/* src/styles/main.css */
+@import './base/variables.css';
+@import './base/reset.css';
+
+/* כאן נייבא אחר כך את כל הקומפוננטים */
