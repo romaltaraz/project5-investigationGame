@@ -100,18 +100,27 @@ VITE_API_URL=http://localhost:5000
 
 ## Running Locally
 
-Use two terminal windows.
+Use three terminal windows: two for the backend and one for the frontend.
 
-### Terminal 1 - Backend
+### Terminal 1 - Backend TypeScript build watcher
 
 ```bash
 cd backend
-npm start
+npm run tsc
 ```
 
-The API server typically runs at `http://localhost:5000`.
+This command watches the backend source files and compiles them into `backend/dist`.
 
-### Terminal 2 - Frontend
+### Terminal 2 - Backend development server
+
+```bash
+cd backend
+npm run dev
+```
+
+This command runs `dist/index.js` with `nodemon`. The API server typically runs at `http://localhost:5000`.
+
+### Terminal 3 - Frontend development server
 
 ```bash
 cd frontend
@@ -120,23 +129,11 @@ npm run dev
 
 The client application typically runs at `http://localhost:5173`.
 
-## Available Scripts
+## Notes
 
-### Backend
-
-```bash
-npm start
-npm run dev
-```
-
-### Frontend
-
-```bash
-npm run dev
-npm run build
-npm run lint
-npm run preview
-```
+- Use `npm run tsc`, not `npm tsc`.
+- The backend development flow depends on the compiled output in `backend/dist`.
+- If `backend/dist` is missing or outdated, `npm run dev` will not reflect the latest backend code.
 
 ## User Flow
 
