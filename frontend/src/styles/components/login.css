@@ -117,6 +117,16 @@
   text-align: center;
 }
 
+.success-message {
+  padding: 10px 12px;
+  border: 1px solid rgba(80, 145, 104, 0.32);
+  border-radius: 12px;
+  background: rgba(80, 145, 104, 0.18);
+  color: #d6f0dc;
+  font-size: 0.95rem;
+  text-align: center;
+}
+
 .login-button {
   margin-top: 4px;
   padding: 14px;
@@ -187,6 +197,11 @@
   text-align: center;
 }
 
+.login-actions {
+  margin-top: 14px;
+  text-align: center;
+}
+
 .toggle-btn {
   display: inline-block;
   padding: 0;
@@ -196,6 +211,10 @@
   font-size: 0.9rem;
   text-decoration: none;
   transition: color 0.2s ease;
+}
+
+.toggle-btn--inline {
+  cursor: pointer;
 }
 
 .toggle-btn:hover {

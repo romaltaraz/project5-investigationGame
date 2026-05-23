@@ -13,9 +13,14 @@ const LOGIN_NOTES = [
 
 const LoginPage = () => {
   const [username, setUsername] = useState('');
+  const [resetEmail, setResetEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [confirmResetPassword, setConfirmResetPassword] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -23,6 +28,7 @@ const LoginPage = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     setLoading(true);
 
     try {
@@ -34,6 +40,52 @@ const LoginPage = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+
+    if (resetPassword !== confirmResetPassword) {
+      setError('הסיסמאות החדשות אינן תואמות');
+      return;
+    }
+
+    if (resetPassword.length < 6) {
+      setError('הסיסמה החדשה חייבת להיות לפחות 6 תווים');
+      return;
+    }
+
+    if (!resetEmail.includes('@')) {
+      setError('יש להזין כתובת מייל תקינה');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const data = await authAPI.forgotPassword(resetEmail, resetPassword);
+      setSuccess(data.message);
+      setPassword('');
+      setResetEmail('');
+      setResetPassword('');
+      setConfirmResetPassword('');
+      setResetMode(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleResetMode = () => {
+    setError('');
+    setSuccess('');
+    setResetEmail('');
+    setResetPassword('');
+    setConfirmResetPassword('');
+    setResetMode((currentMode) => !currentMode);
   };
 
   return (
@@ -48,37 +100,86 @@ const LoginPage = () => {
           <div className="badge">CLASSIFIED</div>
         </div>
 
-        <form className="login-form" onSubmit={handleSubmit}>
-          <div className="input-group">
-            <label>שם סוכן / קוד זיהוי</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="הזן שם קוד"
-              autoComplete="username"
-              required
-            />
-          </div>
+        <form className="login-form" onSubmit={resetMode ? handleResetPassword : handleSubmit}>
+          {resetMode ? (
+            <div className="input-group">
+              <label>מייל</label>
+              <input
+                type="email"
+                value={resetEmail}
+                onChange={(e) => setResetEmail(e.target.value)}
+                placeholder="הזן את המייל שאיתו נרשמת"
+                autoComplete="email"
+                required
+              />
+            </div>
+          ) : (
+            <div className="input-group">
+              <label>שם סוכן / קוד זיהוי</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="הזן שם קוד"
+                autoComplete="username"
+                required
+              />
+            </div>
+          )}
 
-          <div className="input-group">
-            <label>סיסמה</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="current-password"
-              required
-            />
-          </div>
+          {resetMode ? (
+            <>
+              <div className="input-group">
+                <label>סיסמה חדשה</label>
+                <input
+                  type="password"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  placeholder="לפחות 6 תווים"
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
+
+              <div className="input-group">
+                <label>אימות סיסמה חדשה</label>
+                <input
+                  type="password"
+                  value={confirmResetPassword}
+                  onChange={(e) => setConfirmResetPassword(e.target.value)}
+                  placeholder="הזן שוב את הסיסמה החדשה"
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
+            </>
+          ) : (
+            <div className="input-group">
+              <label>סיסמה</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                required
+              />
+            </div>
+          )}
 
           {error && <div className="error-message">{error}</div>}
+          {success && <div className="success-message">{success}</div>}
 
           <button type="submit" className="login-button" disabled={loading}>
-            {loading ? 'מעבד...' : 'התחבר לחקירה'}
+            {loading ? 'מעבד...' : resetMode ? 'אפס סיסמה' : 'התחבר לחקירה'}
           </button>
         </form>
+
+        <div className="login-actions">
+          <button type="button" className="toggle-btn toggle-btn--inline" onClick={toggleResetMode}>
+            {resetMode ? 'חזרה להתחברות' : 'שכחתי סיסמה'}
+          </button>
+        </div>
 
         <div className="auth-notes">
           {LOGIN_NOTES.map((note) => (

@@ -14,6 +14,14 @@ const userSchema = new mongoose.Schema({
     maxlength: [20, 'שם משתמש לא יכול להיות ארוך מ-20 תווים'],
     match: [/^[a-zA-Z0-9_]+$/, 'שם משתמש יכול להכיל רק אותיות, מספרים וקו תחתון']
   },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    lowercase: true,
+    match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'יש להזין כתובת מייל תקינה']
+  },
   password: {
     type: String,
     required: true,

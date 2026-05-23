@@ -62,21 +62,29 @@ app.use('/api/investigate',aiLimiter, investigateRoutes);
 
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { username, password, name } = req.body;
+    const { username, password, name, email } = req.body;
+    const normalizedUsername = username?.trim();
+    const normalizedEmail = email?.trim().toLowerCase();
     
-    if (!username || !password) {
-      return res.status(400).json({ message: 'שם משתמש וסיסמה הם שדות חובה' });
+    if (!normalizedUsername || !password || !normalizedEmail) {
+      return res.status(400).json({ message: 'שם משתמש, מייל וסיסמה הם שדות חובה' });
     }
     
-    const existingUser = await User.findOne({ username });
-    if (existingUser) {
+    const existingUsername = await User.findOne({ username: normalizedUsername });
+    if (existingUsername) {
       return res.status(400).json({ message: 'שם המשתמש כבר תפוס' });
     }
 
+    const existingEmail = await User.findOne({ email: normalizedEmail });
+    if (existingEmail) {
+      return res.status(400).json({ message: 'כתובת המייל כבר רשומה במערכת' });
+    }
+
     const user = await User.create({
-      username,
+      username: normalizedUsername,
+      email: normalizedEmail,
       password, // מוצפן אוטומטית ב-pre-save hook שב-User.js
-      name: name || username
+      name: name || normalizedUsername
     });
 
     const token = jwt.sign(
@@ -95,6 +103,16 @@ app.post('/api/auth/register', async (req, res) => {
       }
     });
   } catch (error) {
+    if (error?.code === 11000) {
+      if (error.keyPattern?.username) {
+        return res.status(400).json({ message: 'שם המשתמש כבר תפוס' });
+      }
+
+      if (error.keyPattern?.email) {
+        return res.status(400).json({ message: 'כתובת המייל כבר רשומה במערכת' });
+      }
+    }
+
     res.status(500).json({ message: 'שגיאה בשרת', error: error.message });
   }
 });
@@ -131,6 +149,34 @@ app.post('/api/auth/login', async (req, res) => {
         activeCases: user.activeCases 
       }
     });
+  } catch (error) {
+    res.status(500).json({ message: 'שגיאה בשרת', error: error.message });
+  }
+});
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email, newPassword } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
+
+    if (!normalizedEmail || !newPassword) {
+      return res.status(400).json({ message: 'מייל וסיסמה חדשה הם שדות חובה' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'הסיסמה החדשה חייבת להיות לפחות 6 תווים' });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(404).json({ message: 'לא נמצא משתמש עם כתובת המייל הזאת' });
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    res.json({ message: 'הסיסמה אופסה בהצלחה. אפשר להתחבר עם הסיסמה החדשה.' });
   } catch (error) {
     res.status(500).json({ message: 'שגיאה בשרת', error: error.message });
   }

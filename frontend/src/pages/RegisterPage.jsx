@@ -8,6 +8,7 @@ import '../styles/components/login.css';
 const RegisterPage = () => {
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -30,10 +31,15 @@ const RegisterPage = () => {
       return;
     }
 
+    if (!email.includes('@')) {
+      setError('יש להזין כתובת מייל תקינה');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const data = await authAPI.register(username, password, name);
+      const data = await authAPI.register(username, email, password, name);
       login(data.user, data.token);
       navigate('/dashboard');
     } catch (err) {
@@ -75,6 +81,18 @@ const RegisterPage = () => {
               onChange={(e) => setUsername(e.target.value)}
               placeholder="בחר שם קוד ייחודי"
               autoComplete="username"
+              required
+            />
+          </div>
+
+          <div className="input-group">
+            <label>מייל</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="agent@unit.local"
+              autoComplete="email"
               required
             />
           </div>

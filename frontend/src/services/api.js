@@ -46,16 +46,22 @@ const request = async (endpoint, options = {}) => {
 };
 
 export const authAPI = {
-  register: (username, password, name) =>
+  register: (username, email, password, name) =>
     request('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ username, password, name }),
+      body: JSON.stringify({ username, email, password, name }),
     }),
 
   login: (username, password) =>
     request('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
+    }),
+
+  forgotPassword: (email, newPassword) =>
+    request('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email, newPassword }),
     }),
 };
 
