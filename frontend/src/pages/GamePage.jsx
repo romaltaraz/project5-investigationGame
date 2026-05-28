@@ -447,29 +447,34 @@ export default function GamePage() {
           <div className="notebook-panel__head">
             <div>
               <span className="side-label">מחברת חקירה</span>
-              <h3>ריכוז עדויות, ציטוטים וסתירות רכות</h3>
+              <h3>סיכום חקירה, ריכוז ממצאים וסתירות</h3>
             </div>
             <span className="notebook-counter">{notebook.evidenceBoard.length} פריטים</span>
           </div>
 
           <div className="notebook-section">
             <div className="notebook-section__head">
-              <strong>תיעוד מהחשוד הנבחר</strong>
+              <strong>סיכום שיחה</strong>
               <span>{selectedSuspect?.name || 'ללא בחירה'}</span>
             </div>
 
-            {notebook.selectedNotes.length === 0 ? (
-              <p className="notebook-empty">עדיין אין תיעוד. ברגע שתתחיל לשאול, התשובות האחרונות יופיעו כאן.</p>
+            {!notebook.conversationSummary ? (
+              <p className="notebook-empty">עדיין אין שיחה. ברגע שתתחיל לשאול יופיע כאן סיכום.</p>
             ) : (
-              <div className="notebook-list">
-                {notebook.selectedNotes.map((entry) => (
-                  <article key={entry.question} className="notebook-item">
-                    <strong>שאלה:</strong>
-                    <p>{entry.question}</p>
-                    <strong>תגובה:</strong>
-                    <p>{entry.answer}</p>
-                  </article>
-                ))}
+              <div className="notebook-summary">
+                <p className="notebook-summary__count">
+                  {notebook.conversationSummary.questionCount === 1
+                    ? 'שאלה אחת נשאלה עד כה.'
+                    : `${notebook.conversationSummary.questionCount} שאלות נשאלו עד כה.`}
+                </p>
+                <div className="notebook-messages-list">
+                  {notebook.conversationSummary.messages.map((item, i) => (
+                    <article key={i} className="notebook-message">
+                      <span className="notebook-message__q">{item.question}</span>
+                      <p className="notebook-message__a">{item.cleanAnswer}</p>
+                    </article>
+                  ))}
+                </div>
               </div>
             )}
           </div>

@@ -81,21 +81,40 @@ const serializeCaseForClient = (caseDoc) => {
 
 const caseNeedsEvidenceAssets = (caseDoc) => (caseDoc?.evidence || []).some((item) => !item?.fileUrl);
 
+// Track in-progress generation to avoid duplicate concurrent runs for the same case
+const _evidenceGenerationInProgress = new Set();
+
 const ensureCaseEvidenceAssets = async (caseDoc) => {
   if (!caseDoc || !caseNeedsEvidenceAssets(caseDoc)) {
     return caseDoc;
   }
 
-  const generatedEvidence = await generateEvidenceAssets({
-    caseId: caseDoc._id.toString(),
-    caseName: caseDoc.caseName,
-    briefingDetails: caseDoc.briefingDetails || {},
-    suspects: (caseDoc.suspects || []).map((suspect) => suspect.toObject?.() || suspect),
-    evidence: (caseDoc.evidence || []).map((item) => item.toObject?.() || item),
-  });
+  const caseId = caseDoc._id.toString();
 
-  caseDoc.evidence = generatedEvidence.map((item) => mapEvidenceForStorage(item));
-  await caseDoc.save();
+  // Skip if already generating for this case (concurrent GET requests)
+  if (_evidenceGenerationInProgress.has(caseId)) {
+    return caseDoc;
+  }
+
+  _evidenceGenerationInProgress.add(caseId);
+
+  try {
+    const generatedEvidence = await generateEvidenceAssets({
+      caseId,
+      caseName: caseDoc.caseName,
+      briefingDetails: caseDoc.briefingDetails || {},
+      suspects: (caseDoc.suspects || []).map((suspect) => suspect.toObject?.() || suspect),
+      evidence: (caseDoc.evidence || []).map((item) => item.toObject?.() || item),
+    });
+
+    const mappedEvidence = generatedEvidence.map((item) => mapEvidenceForStorage(item));
+
+    // Use findByIdAndUpdate to avoid Mongoose VersionError from concurrent saves
+    await Case.findByIdAndUpdate(caseId, { evidence: mappedEvidence });
+    caseDoc.evidence = mappedEvidence;
+  } finally {
+    _evidenceGenerationInProgress.delete(caseId);
+  }
 
   return caseDoc;
 };
@@ -189,7 +208,12 @@ const normalizeCaseData = (caseData, difficulty, commanderPersonality) => {
 };
 
 const parseAiCasePayload = (content = '') => {
-  const cleaned = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  // Strip markdown code fences
+  let cleaned = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+
+  // Repair Hebrew gershayim (") inside string values (e.g. ד"ר, ר"ל)
+  // A quote flanked by non-structural characters is gershayim, not a JSON delimiter
+  cleaned = cleaned.replace(/([^\s,:{[\]}"\\])"([^\s,:{[\]}"\\])/g, "$1'$2");
 
   try {
     return JSON.parse(cleaned);
@@ -198,7 +222,9 @@ const parseAiCasePayload = (content = '') => {
     const end = cleaned.lastIndexOf('}');
 
     if (start >= 0 && end > start) {
-      return JSON.parse(cleaned.slice(start, end + 1));
+      try {
+        return JSON.parse(cleaned.slice(start, end + 1));
+      } catch { /* fall through */ }
     }
 
     throw new Error('לא נמצא JSON תקין בתשובת ה-AI');
@@ -231,7 +257,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
 
     try {
       const openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
+        apiKey: process.env.NVIDIA_API_KEY,
         baseURL: 'https://integrate.api.nvidia.com/v1',
       });
 
@@ -245,6 +271,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
             כתוב כמו תסריטאי ישראלי מנוסה, לא כמו תרגום מאנגלית.
             צור תיק מרתק, הגיוני ועקבי, עם פירוט קונקרטי בכל שדה טקסטואלי.
             אם ניסוח כלשהו נשמע גנרי, קצר מדי או לא טבעי, נסח אותו מחדש לפני ההחזרה.
+            חשוב מאוד: אין להשתמש בגרשיים (") בתוך ערכי מחרוזות ב-JSON. במקום ד"ר כתוב ד׳ר, במקום ר"ל כתוב ר׳ל וכדומה.
             החזר רק JSON תקין ללא טקסט נוסף.`
           },
           {
@@ -297,29 +324,13 @@ router.post('/generate', authenticateToken, async (req, res) => {
     console.log('✅ Case created:', newCase._id);
 
     try {
-      user.activeCases = [...activeCaseIds, newCase._id];
-      await user.save();
+      await User.findByIdAndUpdate(userId, { activeCases: [...activeCaseIds, newCase._id] });
     } catch (userSaveError) {
       await Case.findByIdAndDelete(newCase._id);
       throw userSaveError;
     }
 
-    try {
-      const generatedEvidence = await generateEvidenceAssets({
-        caseId: newCase._id.toString(),
-        caseName: newCase.caseName,
-        briefingDetails: newCase.briefingDetails || {},
-        suspects: (newCase.suspects || []).map((suspect) => suspect.toObject?.() || suspect),
-        evidence: (newCase.evidence || []).map((item) => item.toObject?.() || item),
-      });
-
-      newCase.evidence = generatedEvidence.map((item) => mapEvidenceForStorage(item));
-      await newCase.save();
-    } catch (assetGenerationError) {
-      console.error('⚠️ Evidence asset generation failed, continuing with metadata only:', assetGenerationError.message);
-    }
-
-    // החזרה בטוחה ללקוח (בלי מידע סודי)
+    // החזרה בטוחה ללקוח (בלי מידע סודי) — שולחים מיד לפני יצירת הנכסים
     res.status(201).json({
       message: 'תיק נוצר בהצלחה',
       case: {
@@ -347,6 +358,22 @@ router.post('/generate', authenticateToken, async (req, res) => {
           assetTranscript: e.assetTranscript || '',
         }))
       }
+    });
+
+    // יצירת נכסי ראיות ברקע — לא חוסם את התגובה
+    generateEvidenceAssets({
+      caseId: newCase._id.toString(),
+      caseName: newCase.caseName,
+      briefingDetails: newCase.briefingDetails || {},
+      suspects: (newCase.suspects || []).map((suspect) => suspect.toObject?.() || suspect),
+      evidence: (newCase.evidence || []).map((item) => item.toObject?.() || item),
+    }).then(async (generatedEvidence) => {
+      await Case.findByIdAndUpdate(newCase._id, {
+        evidence: generatedEvidence.map((item) => mapEvidenceForStorage(item))
+      });
+      console.log('✅ Evidence assets generated for case:', newCase._id);
+    }).catch((assetGenerationError) => {
+      console.error('⚠️ Evidence asset generation failed:', assetGenerationError.message);
     });
 
   } catch (error) {
@@ -385,11 +412,16 @@ router.get('/:id', authenticateToken, async (req, res) => {
     const caseDoc = await Case.findOne({
       _id: req.params.id,
       userId: req.user.userId
-    });
+    })
+      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -evidence.hiddenClue')
+      .lean();
 
     if (!caseDoc) return res.status(404).json({ message: 'תיק לא נמצא' });
 
-    await ensureCaseEvidenceAssets(caseDoc);
+    // Generate missing assets in background so briefing can load immediately.
+    ensureCaseEvidenceAssets(caseDoc).catch((assetError) => {
+      console.error('⚠️ Evidence assets failed on GET:', assetError.message);
+    });
 
     res.json({ case: serializeCaseForClient(caseDoc) });
   } catch (error) {

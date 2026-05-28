@@ -39,7 +39,9 @@
 .briefing-secondary,
 .briefing-link {
   border-radius: 14px;
-  transition: 0.2s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
 }
 
 .briefing-back,
@@ -55,7 +57,50 @@
   padding: 2px 16px;
   height: fit-content;
   width:min-content;
+}
 
+.briefing-back::after,
+.briefing-secondary::after,
+.briefing-link::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(212, 173, 99, 0.15);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s, height 0.6s;
+}
+
+.briefing-back:hover::after,
+.briefing-secondary:hover::after,
+.briefing-link:hover::after {
+  width: 300px;
+  height: 300px;
+}
+
+.briefing-back:hover,
+.briefing-secondary:hover,
+.briefing-link:hover {
+  color: var(--text-primary);
+  border-color: rgba(212, 173, 99, 0.34);
+  box-shadow: 0 8px 16px rgba(212, 173, 99, 0.08);
+  transform: translateY(-2px);
+}
+
+.briefing-back:active,
+.briefing-secondary:active,
+.briefing-link:active {
+  transform: translateY(0);
+}
+
+.briefing-back:focus,
+.briefing-secondary:focus,
+.briefing-link:focus {
+  outline: 1px solid rgba(212, 173, 99, 0.4);
+  outline-offset: 2px;
 }
 
 .briefing-primary {
@@ -63,6 +108,37 @@
   background: linear-gradient(120deg, var(--accent-gold), var(--accent-copper));
   color: #23170f;
   font-weight: 800;
+  box-shadow: 0 6px 16px rgba(196, 107, 58, 0.12);
+}
+
+.briefing-primary::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s ease;
+}
+
+.briefing-primary:hover::before {
+  left: 100%;
+}
+
+.briefing-primary:hover {
+  box-shadow: 0 12px 24px rgba(196, 107, 58, 0.24);
+  transform: translateY(-2px);
+}
+
+.briefing-primary:active {
+  transform: translateY(0);
+  box-shadow: 0 6px 12px rgba(196, 107, 58, 0.16);
+}
+
+.briefing-primary:focus {
+  outline: 2px solid rgba(212, 173, 99, 0.5);
+  outline-offset: 2px;
 }
 
 .briefing-link {
@@ -278,15 +354,20 @@
 
 .briefing-evidence__item--interactive {
   cursor: pointer;
-  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .briefing-evidence__item--interactive:hover,
 .briefing-evidence__item--interactive:focus-visible {
-  border-color: rgba(224, 187, 115, 0.42);
-  transform: translateY(-2px);
-  box-shadow: 0 18px 30px rgba(0, 0, 0, 0.18);
+  border-color: rgba(224, 187, 115, 0.5);
+  background: rgba(224, 187, 115, 0.04);
+  transform: translateY(-3px);
+  box-shadow: 0 20px 40px rgba(212, 173, 99, 0.16);
   outline: none;
+}
+
+.briefing-evidence__item--interactive:active {
+  transform: translateY(-1px);
 }
 
 .briefing-evidence__media {
@@ -368,6 +449,42 @@
   color: var(--text-primary);
   font-size: 1.8rem;
   line-height: 1;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.briefing-viewer__close::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(212, 173, 99, 0.15);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s, height 0.6s;
+}
+
+.briefing-viewer__close:hover::after {
+  width: 300px;
+  height: 300px;
+}
+
+.briefing-viewer__close:hover {
+  border-color: rgba(212, 173, 99, 0.34);
+  box-shadow: 0 8px 16px rgba(212, 173, 99, 0.08);
+  transform: scale(1.08);
+}
+
+.briefing-viewer__close:active {
+  transform: scale(1);
+}
+
+.briefing-viewer__close:focus {
+  outline: 1px solid rgba(212, 173, 99, 0.4);
+  outline-offset: 2px;
 }
 
 .briefing-viewer__description {

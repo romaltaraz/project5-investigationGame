@@ -4,6 +4,7 @@
     "outDir": "./dist",
     "rootDir": "./",
     "allowJs": true,
+    "ignoreDeprecations": "6.0",
     "module": "nodenext",
     "target": "esnext",
     "lib": ["esnext"],

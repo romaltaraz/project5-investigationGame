@@ -103,6 +103,11 @@ app.post('/api/auth/register', async (req, res) => {
       }
     });
   } catch (error) {
+    if (error.name === 'ValidationError') {
+      const firstValidationError = Object.values(error.errors || {})[0];
+      return res.status(400).json({ message: firstValidationError?.message || 'פרטי ההרשמה אינם תקינים' });
+    }
+
     if (error?.code === 11000) {
       if (error.keyPattern?.username) {
         return res.status(400).json({ message: 'שם המשתמש כבר תפוס' });

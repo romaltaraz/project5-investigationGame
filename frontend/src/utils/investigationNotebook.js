@@ -1,8 +1,12 @@
-const TIME_PATTERN = /(?:\b\d{1,2}[:.]\d{2}\b|(?:בשעה|בסביבות|סביב|אחרי|לפני)\s+\d{1,2}(?::\d{2})?)/g;
-const LOCATION_PATTERN = /(?:ב|אצל|ליד|מול)\s+[א-ת][א-ת"'\-]*(?:\s+[א-ת][א-ת"'\-]*){0,2}/g;
+const TIME_PATTERN = /(?:\b\d{1,2}:\d{2}\b|(?:בשעה|בסביבות|סביב)\s+\d{1,2}(?::\d{2})?)/g;
+const LOCATION_PATTERN = /(?:(?:ליד|אצל|מול)\s+[א-ת][א-ת"'\-]*(?:\s+[א-ת][א-ת"'\-]*){0,1}|ב[א-ת]{3,}[א-ת"'\-]*)/g;
 const TIME_WORD_PATTERN = /(בבוקר|בצהריים|אחר הצהריים|בערב|בלילה|לפנות בוקר|מוקדם|מאוחר)/g;
 const CLOSE_RELATION_PATTERN = /(חבר(?:ה)?|קרוב(?:ה)?|בן זוג|בת זוג|שותף(?:ה)?|אח(?:ות)?|משפחה|עבדנו יחד|סומך עליו|סומכת עליה)/;
 const DISTANT_RELATION_PATTERN = /(בקושי מכיר|בקושי מכירה|לא ממש מכיר|אין לי קשר|לא קרוב|לא קרובה|רק עובד איתו|רק עובדת איתה|לא דיברתי איתו|לא דיברתי איתה)/;
+const ALONE_PATTERN = /(הייתי לבד|לבדי|לא היה איתי אף אחד|לא היה שם אף אחד|הייתי בעצמי)/;
+const WITH_OTHERS_PATTERN = /(היינו יחד|הייתי עם|ישבנו|נפגשנו|היו איתי)/;
+const DENIAL_PATTERN = /(לא ידעתי|לא ראיתי|לא הייתי שם|לא הכרתי|לא דיברתי|לא נוכחתי|לא שמעתי כלום)/;
+
 const TOPIC_PATTERNS = {
   time: /(מתי|שעה|זמן|לפני|אחרי|באיזו שעה)/,
   location: /(איפה|מיקום|מקום|היית|נכחת|הלכת)/,
@@ -39,6 +43,15 @@ const detectRelationshipTone = (text = '') => {
 
   return tones;
 };
+
+const stripStageDirections = (text = '') =>
+  text
+    .replace(/\([^)]*\)/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/(?:\s*\.\.\.\s*){2,}/g, '...')
+    .replace(/^\s*[,.…\u2026]\s*/g, '')
+    .replace(/\s+([,.])/g, '$1')
+    .trim();
 
 const toNotebookItems = (messages = []) => {
   const notes = [];
@@ -103,15 +116,6 @@ const detectContradictions = (caseDoc) => {
 
   bySuspect.forEach((items, suspectName) => {
     const timeValues = unique(items.filter((item) => item.topics.includes('time')).flatMap((item) => item.times));
-
-    if (timeValues.length > 1) {
-      contradictions.push({
-        id: `${suspectName}-times`,
-        title: `רצף הזמנים של ${suspectName} נשמע קצת זז`,
-        detail: `הופיעו כמה נקודות זמן שונות: ${timeValues.slice(0, 3).join(' , ')}.`,
-      });
-    }
-
     const alibiTimes = unique(items.flatMap((item) => item.alibiTimes));
 
     if (alibiTimes.length > 0 && timeValues.length > 0) {
@@ -144,13 +148,60 @@ const detectContradictions = (caseDoc) => {
     const peopleValues = unique(items.filter((item) => item.topics.includes('people')).flatMap((item) => item.mentionedNames));
     const alibiNames = unique(items.flatMap((item) => item.alibiNames));
 
-    if (peopleValues.length > 1) {
+    // time inconsistency across conversation (restored & improved)
+    const timeAnswerItems = items.filter((item) => item.topics.includes('time') && item.times.length > 0);
+    if (timeAnswerItems.length >= 2) {
+      const distinctTimes = unique(timeAnswerItems.flatMap((item) => item.times));
+      if (distinctTimes.length >= 2) {
+        contradictions.push({
+          id: `${suspectName}-time-inconsistency`,
+          title: `ציר הזמן של ${suspectName} מצריך בדיקה`,
+          detail: `בתשובות לשאלות על זמן עלו שעות שונות: ${distinctTimes.slice(0, 3).join(', ')} — כדאי לבדוק אם הן מתיישבות.`,
+        });
+      }
+    }
+
+    // multiple people in people-related answers (restored & improved)
+    const peopleAnswerItems = items.filter((item) => item.topics.includes('people') && item.mentionedNames.length > 0);
+    if (peopleAnswerItems.length >= 2) {
+      const distinctPeople = unique(peopleAnswerItems.flatMap((item) => item.mentionedNames));
+      if (distinctPeople.length >= 2) {
+        contradictions.push({
+          id: `${suspectName}-people-inconsistency`,
+          title: `הגרסה של ${suspectName} לגבי מי היה שם לא ברורה`,
+          detail: `בשאלות על נוכחות הוזכרו שמות שונים: ${distinctPeople.slice(0, 3).join(', ')} — כדאי לברר מה בדיוק קרה.`,
+        });
+      }
+    }
+
+    // alone vs. with others
+    const aloneItems = items.filter((item) => ALONE_PATTERN.test(item.answer));
+    const withOthersItems = items.filter((item) => WITH_OTHERS_PATTERN.test(item.answer));
+
+    if (aloneItems.length > 0 && withOthersItems.length > 0) {
       contradictions.push({
-        id: `${suspectName}-people`,
-        title: `הגרסה של ${suspectName} לגבי מי היה בסביבה דורשת עוד שאלה`,
-        detail: `עלו כמה שמות שונים סביב אותה שרשרת אירועים: ${peopleValues.slice(0, 3).join(', ')}.`,
+        id: `${suspectName}-alone-vs-others`,
+        title: `${suspectName} אמר/ה שהיה/ה לבד — אבל לא ממש`,
+        detail: `בתשובה אחת עלה שהיה/ה לבד, אבל בתשובה אחרת הוזכרה נוכחות של מישהו נוסף.`,
       });
     }
+
+    // denial + continued knowledge
+    const denialItems = items.filter((item) => DENIAL_PATTERN.test(item.answer));
+    denialItems.forEach((denialItem) => {
+      denialItem.mentionedNames.forEach((name) => {
+        const appearsElsewhere = items
+          .filter((item) => item !== denialItem && !DENIAL_PATTERN.test(item.answer))
+          .some((item) => item.answer.includes(name));
+        if (appearsElsewhere) {
+          contradictions.push({
+            id: `${suspectName}-denial-${name}`,
+            title: `${suspectName} הכחיש/ה — אבל ${name} כבר הוזכר/ה קודם`,
+            detail: `השם "${name}" עלה בתשובות אחרות, אבל בהמשך עלתה הכחשה או ריחוק מאותו קשר.`,
+          });
+        }
+      });
+    });
 
     if (alibiNames.length > 0 && peopleValues.length > 0) {
       const overlap = alibiNames.some((value) => peopleValues.includes(value));
@@ -219,11 +270,33 @@ const buildEvidenceBoard = (caseDoc) => {
         type: 'statement',
         label: interaction.entityName,
         meta: 'אמירה אחרונה',
-        content: latest?.answer || 'עדיין אין עדות מתועדת.',
+        content: stripStageDirections(latest?.answer || '') || 'עדיין אין עדות מתועדת.',
       };
     });
 
   return [...evidenceEntries, ...alibiEntries, ...interactionEntries];
+};
+
+const buildConversationSummary = (interaction) => {
+  if (!interaction?.messages?.length) return null;
+
+  const pairs = [];
+  const msgs = interaction.messages;
+
+  for (let i = 0; i < msgs.length; i += 2) {
+    const q = msgs[i];
+    const a = msgs[i + 1];
+    if (q?.role === 'user') {
+      const cleanAnswer = stripStageDirections(a?.content || '');
+      if (cleanAnswer.length > 3) {
+        pairs.push({ question: q.content, cleanAnswer });
+      }
+    }
+  }
+
+  if (pairs.length === 0) return null;
+
+  return { questionCount: pairs.length, messages: pairs };
 };
 
 const buildCaseNotebook = (caseDoc, selectedSuspectName) => {
@@ -232,7 +305,7 @@ const buildCaseNotebook = (caseDoc, selectedSuspectName) => {
   );
 
   return {
-    selectedNotes: toNotebookItems(selectedInteraction?.messages).slice(0, 4),
+    conversationSummary: buildConversationSummary(selectedInteraction),
     contradictions: detectContradictions(caseDoc),
     evidenceBoard: buildEvidenceBoard(caseDoc),
     investigatorNotes: caseDoc?.investigatorNotes || '',
