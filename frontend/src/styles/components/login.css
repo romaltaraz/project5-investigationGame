@@ -105,11 +105,13 @@
 .input-group input:autofill {
   -webkit-autofill: none;
   -webkit-box-shadow: inset 0 0 0 9999px rgba(30, 25, 22, 0.8), 0 0 0 4px rgba(212, 173, 99, 0.12);
+  box-shadow: inset 0 0 0 9999px rgba(30, 25, 22, 0.8), 0 0 0 4px rgba(212, 173, 99, 0.12);
   -webkit-text-fill-color: var(--text-primary);
 }
 
 .input-group input:autofill:focus {
   -webkit-box-shadow: inset 0 0 0 9999px rgba(30, 25, 22, 0.8), 0 0 0 4px rgba(212, 173, 99, 0.12);
+  box-shadow: inset 0 0 0 9999px rgba(30, 25, 22, 0.8), 0 0 0 4px rgba(212, 173, 99, 0.12);
   -webkit-text-fill-color: var(--text-primary);
 }
 
