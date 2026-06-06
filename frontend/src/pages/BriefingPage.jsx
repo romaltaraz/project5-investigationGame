@@ -85,19 +85,6 @@ const buildFallbackBriefingDetails = (caseDoc) => ({
   incidentLocation: caseDoc.caseName,
   incidentSummary: caseDoc.commanderBrief,
   anomaly: 'יש פער בין מה שנראה על פני השטח לבין האופן שבו המעורבים מתארים את מה שקרה.',
-  situation: caseDoc.commanderBrief,
-  stakes: 'אם לא תצליח לבודד מהר את הגרסאות החלשות, מישהו יספיק לעצב עבורך את הסיפור לפני שהאמת תתגבש.',
-  locationContext: `התיק הזה מתרחש סביב ${caseDoc.caseName}, ולכן כל תנועה, זמן או קשר בין הדמויות יכולים להפוך למפתח.`,
-  timelineMarks: [
-    'שלב פתיחה: הצוות בשטח אסף גרסאות ראשונות ועדיין אין ציר זמן יציב.',
-    'שלב ביניים: עולות סתירות ראשונות בין תנועה, שהות וקשרים אישיים.',
-    'שלב חקירה: צריך לבדוק מי משחיז את הגרסה שלו רק כששואלים על דקות קריטיות.',
-  ],
-  fieldSignals: [
-    'יש פרט בזירה שנראה קטן מדי בשביל תשומת הלב שהוא מקבל.',
-    'לפחות גרסה אחת נשמעת מהוקצעת מדי ביחס ללחץ שאמור להיות בשטח.',
-    'אחד המעורבים מנסה לקבע מסגרת זמן לפני שבכלל נשאל עליה לעומק.',
-  ],
   knownFacts: [
     `יש כרגע ${(caseDoc.suspects || []).length} מעורבים מרכזיים לבחינה.`,
     `כבר נאספו ${(caseDoc.evidence || []).length} פריטי חומר ראשוניים.`,
@@ -271,7 +258,7 @@ export default function BriefingPage() {
 
           <p className="briefing-eyebrow">תדרוך מפקד</p>
           <h1>{caseDoc.caseName}</h1>
-          <p className="briefing-summary">לפני הכניסה לחקירה, קבל תמונה מלאה של המקרה, הדמויות והחומרים שכבר זמינים בתיק.</p>
+          <p className="briefing-summary">כל מה שצריך כדי להיכנס לחקירה בלי עומס מיותר.</p>
         </div>
       </header>
 
@@ -300,41 +287,8 @@ export default function BriefingPage() {
             </article>
           </section>
 
-          <div className="mission-list">
-            <article>
-              <strong>מה ידוע כרגע</strong>
-              <p>{briefingDetails?.situation}</p>
-            </article>
-            <article>
-              <strong>למה זה דחוף</strong>
-              <p>{briefingDetails?.stakes}</p>
-            </article>
-            <article>
-              <strong>על הזירה</strong>
-              <p>{briefingDetails?.locationContext}</p>
-            </article>
-          </div>
-
           <section className="briefing-subsection">
-            <strong className="briefing-subsection__title">ציר זמן לפתיחה</strong>
-            <div className="briefing-bullets">
-              {(briefingDetails?.timelineMarks || []).map((point) => (
-                <p key={point}>{point}</p>
-              ))}
-            </div>
-          </section>
-
-          <section className="briefing-subsection">
-            <strong className="briefing-subsection__title">מה בולט כבר מהשטח</strong>
-            <div className="briefing-bullets">
-              {(briefingDetails?.fieldSignals || []).map((signal) => (
-                <p key={signal}>{signal}</p>
-              ))}
-            </div>
-          </section>
-
-          <section className="briefing-subsection">
-            <strong className="briefing-subsection__title">עובדות פתיחה</strong>
+            <strong className="briefing-subsection__title">מה לקחת איתך לחקירה</strong>
             <div className="briefing-bullets">
               {(briefingDetails?.knownFacts || []).map((fact) => (
                 <p key={fact}>{fact}</p>
@@ -376,7 +330,6 @@ export default function BriefingPage() {
                     </span>
                   </div>
                   <p className="briefing-suspect__meta">תפקיד: {suspect.role}</p>
-                  <p>{suspect.personality}</p>
                   {suspect.alibi && <small>אליבי ראשוני: {suspect.alibi}</small>}
                   <button className="briefing-link" onClick={() => enterInvestigation(suspect.name)}>
                     פתח חקירה עם {suspect.name}
@@ -408,7 +361,6 @@ export default function BriefingPage() {
                   <strong>{EVIDENCE_LABELS[item.type] || item.type}</strong>
                   <p>{item.description}</p>
                   {renderEvidenceCardPreview(item)}
-                  {item.assetTranscript && <small className="briefing-evidence__transcript">תמלול: {item.assetTranscript}</small>}
                 </article>
               ))}
             </div>
