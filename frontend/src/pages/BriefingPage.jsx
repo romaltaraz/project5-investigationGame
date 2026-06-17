@@ -4,6 +4,40 @@ import { useAuth } from '../context/AuthContext';
 import { BASE_URL, casesAPI } from '../services/api.js';
 import '../styles/components/briefing.css';
 
+const SuspectPortrait = ({ name = '', size = 52 }) => {
+  const hash = name.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  const v    = hash % 4;
+  const hue  = (hash * 47) % 360;
+  const silhouettes = [
+    `<circle cx="24" cy="18" r="9" fill="rgba(255,220,150,.18)"/>
+     <path d="M 6 52 Q 6 34 24 34 Q 42 34 42 52 Z" fill="rgba(255,220,150,.18)"/>`,
+    `<polygon points="24,9 33,22 24,28 15,22" fill="rgba(255,220,150,.18)"/>
+     <path d="M 8 52 Q 8 34 24 34 Q 40 34 40 52 Z" fill="rgba(255,220,150,.18)"/>`,
+    `<ellipse cx="24" cy="19" rx="11" ry="9" fill="rgba(255,220,150,.18)"/>
+     <path d="M 4 52 Q 4 34 24 34 Q 44 34 44 52 Z" fill="rgba(255,220,150,.18)"/>`,
+    `<ellipse cx="24" cy="18" rx="7" ry="10" fill="rgba(255,220,150,.18)"/>
+     <path d="M 10 52 Q 10 34 24 34 Q 38 34 38 52 Z" fill="rgba(255,220,150,.18)"/>`,
+  ];
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 52" fill="none" xmlns="http://www.w3.org/2000/svg"
+         style={{ display:'block', flexShrink:0, borderRadius:8 }}>
+      <rect width="48" height="52" fill={`hsl(${hue},15%,8%)`}/>
+      {[...Array(26)].map((_,i) => (
+        <line key={i} x1="0" y1={i*2} x2="48" y2={i*2} stroke="rgba(0,0,0,.35)" strokeWidth="1"/>
+      ))}
+      <g dangerouslySetInnerHTML={{ __html: silhouettes[v] }}/>
+      <rect width="48" height="52" fill="rgba(212,175,55,.04)"/>
+      <path d="M2 2 L2 8 M2 2 L8 2"     stroke="rgba(212,175,55,.5)" strokeWidth="1" fill="none"/>
+      <path d="M46 2 L40 2 M46 2 L46 8" stroke="rgba(212,175,55,.5)" strokeWidth="1" fill="none"/>
+      <path d="M2 50 L2 44 M2 50 L8 50" stroke="rgba(212,175,55,.5)" strokeWidth="1" fill="none"/>
+      <path d="M46 50 L40 50 M46 50 L46 44" stroke="rgba(212,175,55,.5)" strokeWidth="1" fill="none"/>
+      <text x="24" y="47" textAnchor="middle" fontFamily="monospace" fontSize="5" fill="rgba(212,175,55,.4)">
+        #{(hash % 9000 + 1000)}
+      </text>
+    </svg>
+  );
+};
+
 const DIFFICULTY_LABELS = {
   easy: 'קל',
   medium: 'בינוני',
@@ -324,6 +358,7 @@ export default function BriefingPage() {
               {(caseDoc.suspects || []).map((suspect) => (
                 <article key={suspect.name} className="briefing-suspect">
                   <div className="briefing-suspect__head">
+                    <SuspectPortrait name={suspect.name} size={52}/>
                     <strong>{suspect.name}</strong>
                     <span className={`briefing-person-tag briefing-person-tag--${getInvolvementType(suspect)}`}>
                       {INVOLVEMENT_LABELS[getInvolvementType(suspect)]}

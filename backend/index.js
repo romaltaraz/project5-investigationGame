@@ -26,12 +26,12 @@ app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
     directives: {
-      frameAncestors: ["'self'", 'http://localhost:5173', 'http://localhost:3000'],
+      frameAncestors: ["'self'", 'http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000'],
     },
   },
 }));
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000'],   // הוספנו את הפורט של Vite
+  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000'],
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' })); //לא צריך bodyParser כי כבר כולל פונקציונליות דומה עם express.json()

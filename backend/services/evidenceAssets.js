@@ -414,10 +414,10 @@ const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, sus
   }
 
   if (evidence.type === 'message') {
-    const { system, user } = buildMessagePrompt({ evidence });
+    const { system, user } = buildMessagePrompt({ evidence, suspects });
     const aiMessages = await generateAiText(system, user);
     const filename = `${fileBase}.html`;
-    await fs.writeFile(path.join(caseDir, filename), renderMessageHtml({ caseName, evidence, aiMessages }), 'utf8');
+    await fs.writeFile(path.join(caseDir, filename), renderMessageHtml({ caseName, evidence, aiMessages, suspects }), 'utf8');
     return buildAssetEnvelope(evidence, filename, 'text/html; charset=utf-8', 'message', { caseId });
   }
 

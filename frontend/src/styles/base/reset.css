@@ -18,13 +18,6 @@ button {
   cursor: pointer;
   border: none;
   background: none;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-}
-
-button:active {
-  transform: scale(0.98);
 }
 
 input:focus {

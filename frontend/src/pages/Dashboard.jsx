@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { casesAPI } from '../services/api.js';
 import '../styles/components/dashboard.css';
+import DashboardMapHero from '../components/DashboardMapHero';
 
 const DIFFICULTIES = [
   { value: 'easy', label: 'קל', desc: 'רמזים ברורים, חשודים פחות מתחמקים' },
@@ -29,7 +30,6 @@ const DIFFICULTY_LABELS = {
 };
 
 const formatDate = (date) => new Date(date).toLocaleDateString('he-IL');
-
 const trimBrief = (text = '') => (text.length > 120 ? `${text.slice(0, 120).trim()}...` : text);
 const getCaseId = (item = {}) => item.id || item._id || '';
 
@@ -61,7 +61,6 @@ export default function Dashboard() {
   const fetchCases = async () => {
     setLoading(true);
     setError('');
-
     try {
       const data = await casesAPI.getAll();
       setCases(data.cases || []);
@@ -70,7 +69,6 @@ export default function Dashboard() {
         handleUnauthorized();
         return;
       }
-
       setError(err.message);
     } finally {
       setLoading(false);
@@ -82,7 +80,6 @@ export default function Dashboard() {
       setShowModal(false);
       return;
     }
-
     setGenerating(true);
     try {
       const result = await casesAPI.generate(difficulty, commanderPersonality);
@@ -92,7 +89,6 @@ export default function Dashboard() {
         handleUnauthorized();
         return;
       }
-
       setError(err.message);
     } finally {
       setGenerating(false);
@@ -124,31 +120,12 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <section className="dashboard-hero">
-        <article className="hero-card hero-card--main">
-          <span className="hero-label">תמונת מצב</span>
-          <h2>המערכת מוכנה לחקירה הבאה שלך</h2>
-          <p>
-            כל תיק נשמר בנפרד, החשודים מגיבים לפי אישיות קבועה, והפתרון נשאר בשרת בלבד
-            עד לרגע ההכרעה.
-          </p>
-        </article>
-
-        <article className="hero-card hero-card--stats">
-          <div className="stat-box">
-            <strong>{activeCases.length}/3</strong>
-            <span>תיקים פתוחים</span>
-          </div>
-          <div className="stat-box">
-            <strong>{openSlots}</strong>
-            <span>מקומות פנויים</span>
-          </div>
-          <div className="stat-box">
-            <strong>{cases.filter((item) => item.status === 'solved').length}</strong>
-            <span>תיקים שנפתרו</span>
-          </div>
-        </article>
-      </section>
+      <div className="dashboard-body">
+      <DashboardMapHero
+        activeCases={activeCases.length}
+        solvedCases={cases.filter((item) => item.status === 'solved').length}
+        openSlots={openSlots}
+      />
 
       {error && <div className="dashboard-error">{error}</div>}
 
@@ -257,6 +234,7 @@ export default function Dashboard() {
           </div>
         </section>
       )}
+      </div>
     </div>
   );
 }

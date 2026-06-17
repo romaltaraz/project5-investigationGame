@@ -1,7 +1,8 @@
 /* src/styles/components/game.css */
 
 .game-container {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 320px 1fr;
   background:
@@ -70,6 +71,7 @@
 
 .sidebar {
   padding: 18px;
+  height: 100%;
   border-left: 1px solid var(--border-color);
   background: rgba(31, 27, 24, 0.96);
   flex-direction: column;
@@ -84,9 +86,8 @@
 .confirm-btn,
 .input-area button {
   border-radius: 14px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  overflow: hidden;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+  cursor: pointer;
 }
 
 .back-btn,
@@ -103,53 +104,23 @@
   padding: 10px 14px;
 }
 
-.back-btn::after,
-.action-btn::after,
-.tone-btn::after,
-.cancel-btn::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 0;
-  height: 0;
-  border-radius: 50%;
-  background: rgba(212, 173, 99, 0.15);
-  transform: translate(-50%, -50%);
-  transition: width 0.6s, height 0.6s;
-}
-
-.back-btn:hover::after,
-.action-btn:hover::after,
-.tone-btn:hover::after,
-.cancel-btn:hover::after {
-  width: 300px;
-  height: 300px;
-}
-
 .back-btn:hover,
 .action-btn:hover,
 .tone-btn:hover,
 .cancel-btn:hover {
   color: var(--text-primary);
-  border-color: rgba(212, 173, 99, 0.34);
-  box-shadow: 0 8px 16px rgba(212, 173, 99, 0.08);
-  transform: translateY(-2px);
+  border-color: rgba(212, 173, 99, 0.6);
+  background: rgba(212, 173, 99, 0.15);
+  transform: translateY(-4px) scale(1.05);
+  box-shadow: 0 12px 28px rgba(212, 173, 99, 0.25);
 }
 
 .back-btn:active,
 .action-btn:active,
 .tone-btn:active,
 .cancel-btn:active {
-  transform: translateY(0);
-}
-
-.back-btn:focus,
-.action-btn:focus,
-.tone-btn:focus,
-.cancel-btn:focus {
-  outline: 1px solid rgba(212, 173, 99, 0.4);
-  outline-offset: 2px;
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 4px 12px rgba(212, 173, 99, 0.15);
 }
 
 .sidebar-brief,
@@ -230,11 +201,32 @@
 
 .suspect-card {
   cursor: pointer;
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease;
+}
+
+.suspect-card:hover {
+  transform: translateY(-6px) scale(1.03);
+  border-color: rgba(212, 173, 99, 0.5);
+  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3), 0 0 30px rgba(212, 173, 99, 0.2);
+  filter: brightness(1.1);
+}
+
+.suspect-card:active {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
 }
 
 .suspect-card.active {
-  border-color: rgba(212, 173, 99, 0.34);
-  background: rgba(212, 173, 99, 0.08);
+  border-color: rgba(212, 173, 99, 0.6);
+  background: rgba(212, 173, 99, 0.15);
+  box-shadow: 0 6px 20px rgba(212, 173, 99, 0.25), 0 0 20px rgba(212, 173, 99, 0.15);
+}
+
+.suspect-card.active:hover {
+  border-color: rgba(212, 173, 99, 0.8);
+  background: rgba(212, 173, 99, 0.2);
+  transform: translateY(-8px) scale(1.04);
+  box-shadow: 0 18px 45px rgba(212, 173, 99, 0.35), 0 0 40px rgba(212, 173, 99, 0.3);
 }
 
 .suspect-name-row,
@@ -324,6 +316,16 @@
   margin-top: 8px;
 }
 
+.evidence-card__frame {
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  display: block;
+  background: rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+}
+
 .evidence-card__link {
   display: inline-flex;
   margin-top: 8px;
@@ -348,58 +350,42 @@
   text-align: right;
 }
 
+.action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 .action-btn.solve,
 .confirm-btn,
 .input-area button {
   background: linear-gradient(120deg, var(--accent-gold), var(--accent-copper));
   color: #22170f;
   font-weight: 800;
-  box-shadow: 0 6px 16px rgba(196, 107, 58, 0.12);
-  position: relative;
-}
-
-.action-btn.solve::before,
-.confirm-btn::before,
-.input-area button::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left 0.5s ease;
-}
-
-.action-btn.solve:hover::before,
-.confirm-btn:hover::before,
-.input-area button:hover::before {
-  left: 100%;
+  border: none;
 }
 
 .action-btn.solve:hover,
-.confirm-btn:hover,
-.input-area button:hover {
-  box-shadow: 0 12px 24px rgba(196, 107, 58, 0.24);
-  transform: translateY(-2px);
+.confirm-btn:hover:not(:disabled),
+.input-area button:hover:not(:disabled) {
+  transform: translateY(-3px) scale(1.04);
+  box-shadow: 0 14px 34px rgba(196, 107, 58, 0.4), 0 0 25px rgba(212, 173, 99, 0.3);
+  filter: brightness(1.12);
 }
 
 .action-btn.solve:active,
-.confirm-btn:active,
-.input-area button:active {
-  transform: translateY(0);
-  box-shadow: 0 6px 12px rgba(196, 107, 58, 0.16);
-}
-
-.action-btn.solve:focus,
-.confirm-btn:focus,
-.input-area button:focus {
-  outline: 2px solid rgba(212, 173, 99, 0.5);
-  outline-offset: 2px;
+.confirm-btn:active:not(:disabled),
+.input-area button:active:not(:disabled) {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 8px 20px rgba(196, 107, 58, 0.3);
+  filter: brightness(1.05);
 }
 
 .chat-area {
   min-width: 0;
+  height: 100%;
+  overflow: hidden;
   padding: 18px;
   flex-direction: column;
   gap: 12px;
@@ -439,9 +425,18 @@
 }
 
 .tone-btn.active {
-  border-color: rgba(212, 173, 99, 0.34);
+  border-color: rgba(212, 173, 99, 0.6);
   color: var(--accent-gold);
-  background: rgba(212, 173, 99, 0.08);
+  background: rgba(212, 173, 99, 0.15);
+  transform: translateY(0) scale(1.05);
+  box-shadow: 0 4px 15px rgba(212, 173, 99, 0.3), 0 0 20px rgba(212, 173, 99, 0.2);
+}
+
+.tone-btn.active:hover {
+  border-color: rgba(212, 173, 99, 0.8);
+  background: rgba(212, 173, 99, 0.2);
+  transform: translateY(-4px) scale(1.08);
+  box-shadow: 0 12px 30px rgba(212, 173, 99, 0.4), 0 0 30px rgba(212, 173, 99, 0.3);
 }
 
 .messages,
@@ -451,8 +446,7 @@
 
 .messages {
   flex: 1;
-  min-height: 280px;
-  max-height: min(46vh, 420px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -514,12 +508,6 @@
   color: var(--text-primary);
 }
 
-.modal select option {
-  background: #1a1816;
-  color: #c9a84c;
-  font-weight: 600;
-}
-
 .input-area input:focus,
 .modal textarea:focus,
 .modal select:focus,
@@ -545,6 +533,9 @@
 .notebook-panel {
   display: grid;
   gap: 14px;
+  flex-shrink: 0;
+  max-height: 38vh;
+  overflow-y: auto;
 }
 
 .notebook-panel__head {
@@ -560,47 +551,6 @@
 .notebook-list {
   display: grid;
   gap: 10px;
-}
-
-.notebook-summary {
-  display: grid;
-  gap: 8px;
-}
-
-.notebook-summary__count {
-  font-size: 0.82rem;
-  color: var(--color-text-muted, rgba(255,255,255,0.5));
-  margin: 0;
-}
-
-.notebook-messages-list {
-  display: grid;
-  gap: 8px;
-  max-height: 340px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.notebook-message {
-  display: grid;
-  gap: 4px;
-  padding: 8px 10px;
-  background: rgba(255,255,255,0.03);
-  border-radius: 5px;
-  border-left: 2px solid var(--color-accent, #c9a84c);
-}
-
-.notebook-message__q {
-  font-size: 0.78rem;
-  color: var(--color-accent, #c9a84c);
-  opacity: 0.75;
-}
-
-.notebook-message__a {
-  margin: 0;
-  font-size: 0.88rem;
-  line-height: 1.55;
-  color: var(--color-text, rgba(255,255,255,0.85));
 }
 
 .notebook-section {
@@ -784,4 +734,20 @@
   .chat-title-row {
     align-items: flex-start;
   }
+}
+
+/* ── EKG Stress Monitor ── */
+.ekg-container {
+  width: 100%;
+  overflow: hidden;
+}
+
+.ekg-svg {
+  display: block;
+  width: 100%;
+}
+
+@keyframes ekg-loop {
+  from { stroke-dashoffset: 600; }
+  to   { stroke-dashoffset: 0; }
 }

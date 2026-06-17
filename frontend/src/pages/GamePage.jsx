@@ -5,6 +5,63 @@ import { BASE_URL, casesAPI, investigateAPI } from '../services/api.js';
 import { buildCaseNotebook } from '../utils/investigationNotebook.js';
 import '../styles/components/game.css';
 
+const SuspectPortrait = ({ name = '', size = 44 }) => {
+  const hash = name.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  const v    = hash % 4;
+  const hue  = (hash * 47) % 360;
+  const silhouettes = [
+    `<circle cx="22" cy="17" r="8" fill="rgba(255,220,150,.18)"/>
+     <path d="M 5 44 Q 5 30 22 30 Q 39 30 39 44 Z" fill="rgba(255,220,150,.18)"/>`,
+    `<polygon points="22,8 30,20 22,25 14,20" fill="rgba(255,220,150,.18)"/>
+     <path d="M 6 44 Q 6 30 22 30 Q 38 30 38 44 Z" fill="rgba(255,220,150,.18)"/>`,
+    `<ellipse cx="22" cy="17" rx="10" ry="8" fill="rgba(255,220,150,.18)"/>
+     <path d="M 4 44 Q 4 30 22 30 Q 40 30 40 44 Z" fill="rgba(255,220,150,.18)"/>`,
+    `<ellipse cx="22" cy="17" rx="6.5" ry="9" fill="rgba(255,220,150,.18)"/>
+     <path d="M 8 44 Q 8 30 22 30 Q 36 30 36 44 Z" fill="rgba(255,220,150,.18)"/>`,
+  ];
+  return (
+    <svg width={size} height={size} viewBox="0 0 44 44" fill="none"
+         xmlns="http://www.w3.org/2000/svg" style={{ display:'block', flexShrink:0, borderRadius:6 }}>
+      <rect width="44" height="44" fill={`hsl(${hue},12%,9%)`}/>
+      {[...Array(22)].map((_,i) => (
+        <line key={i} x1="0" y1={i*2} x2="44" y2={i*2} stroke="rgba(0,0,0,.35)" strokeWidth="1"/>
+      ))}
+      <g dangerouslySetInnerHTML={{ __html: silhouettes[v] }}/>
+      <rect width="44" height="44" fill="rgba(212,175,55,.04)"/>
+      <path d="M2 2 L2 7 M2 2 L7 2"     stroke="rgba(212,175,55,.45)" strokeWidth="1" fill="none"/>
+      <path d="M42 2 L37 2 M42 2 L42 7" stroke="rgba(212,175,55,.45)" strokeWidth="1" fill="none"/>
+      <path d="M2 42 L2 37 M2 42 L7 42" stroke="rgba(212,175,55,.45)" strokeWidth="1" fill="none"/>
+      <path d="M42 42 L37 42 M42 42 L42 37" stroke="rgba(212,175,55,.45)" strokeWidth="1" fill="none"/>
+      <text x="22" y="41" textAnchor="middle" fontFamily="monospace" fontSize="4.5" fill="rgba(212,175,55,.35)">
+        #{(hash % 9000 + 1000)}
+      </text>
+    </svg>
+  );
+};
+
+const EkgMeter = ({ stress = 0 }) => {
+  const pct   = Math.min(100, Math.max(0, stress));
+  const color = pct < 40 ? '#55C878' : pct < 70 ? '#D4AF37' : '#FF4444';
+  const w = 200, h = 28;
+  const flatY = h / 2;
+  const peak  = Math.round((pct / 100) * (h - 6));
+  const mid   = w / 2;
+  const d = [
+    `M 0 ${flatY}`, `L ${mid-30} ${flatY}`,
+    `L ${mid-10} ${flatY+4}`, `L ${mid-4} ${flatY-peak}`,
+    `L ${mid+2} ${flatY+peak*.4}`, `L ${mid+8} ${flatY}`,
+    `L ${w} ${flatY}`,
+  ].join(' ');
+  return (
+    <div className="ekg-container">
+      <svg className="ekg-svg" width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+        <path d={d} stroke={color} strokeWidth="1.5" fill="none" strokeDasharray="600"
+              style={{ animation: pct > 5 ? 'ekg-loop 2.2s linear infinite' : 'none', opacity: pct > 5 ? 1 : 0.2 }}/>
+      </svg>
+    </div>
+  );
+};
+
 const TONE_LABELS = {
   neutral: 'נייטרלי',
   empathetic: 'אמפתי',
@@ -45,6 +102,12 @@ const resolveEvidenceAssetUrl = (item = {}) => {
   return /^https?:\/\//i.test(item.fileUrl) ? item.fileUrl : `${BASE_URL}${item.fileUrl}`;
 };
 
+const EVIDENCE_FRAME_HEIGHT = {
+  message: 380,
+  recording: 420,
+  document: 500,
+};
+
 const renderEvidenceAsset = (item = {}) => {
   const assetUrl = resolveEvidenceAssetUrl(item);
 
@@ -58,6 +121,20 @@ const renderEvidenceAsset = (item = {}) => {
 
   if ((item.mimeType || '').startsWith('audio/')) {
     return <audio className="evidence-card__audio" controls preload="none" src={assetUrl} />;
+  }
+
+  if ((item.mimeType || '').startsWith('text/html')) {
+    const frameHeight = EVIDENCE_FRAME_HEIGHT[item.type] || 400;
+    return (
+      <iframe
+        className="evidence-card__frame"
+        src={assetUrl}
+        title={item.description || 'ראיה'}
+        sandbox="allow-same-origin"
+        style={{ height: frameHeight }}
+        loading="lazy"
+      />
+    );
   }
 
   return (
@@ -350,6 +427,7 @@ export default function GamePage() {
             className={`suspect-card ${selectedSuspectName === suspect.name ? 'active' : ''}`}
             onClick={() => handleSelectSuspect(suspect)}
           >
+            <SuspectPortrait name={suspect.name} size={44}/>
             <div className="suspect-name-row">
               <div className="suspect-name">{suspect.name}</div>
               <span className={`person-badge person-badge--${getInvolvementType(suspect)}`}>
@@ -357,9 +435,7 @@ export default function GamePage() {
               </span>
             </div>
             <div className="suspect-role">תפקיד: {suspect.role}</div>
-            <div className="stress-bar">
-              <div className="stress-fill" style={{ width: `${suspect.stressMeter || 0}%` }} />
-            </div>
+            <EkgMeter stress={suspect.stressMeter || 0}/>
             <div className="stress-label">לחץ: {suspect.stressMeter || 0}%</div>
           </div>
         ))}
@@ -447,34 +523,29 @@ export default function GamePage() {
           <div className="notebook-panel__head">
             <div>
               <span className="side-label">מחברת חקירה</span>
-              <h3>סיכום חקירה, ריכוז ממצאים וסתירות</h3>
+              <h3>ריכוז עדויות, ציטוטים וסתירות רכות</h3>
             </div>
             <span className="notebook-counter">{notebook.evidenceBoard.length} פריטים</span>
           </div>
 
           <div className="notebook-section">
             <div className="notebook-section__head">
-              <strong>סיכום שיחה</strong>
+              <strong>תיעוד מהחשוד הנבחר</strong>
               <span>{selectedSuspect?.name || 'ללא בחירה'}</span>
             </div>
 
-            {!notebook.conversationSummary ? (
-              <p className="notebook-empty">עדיין אין שיחה. ברגע שתתחיל לשאול יופיע כאן סיכום.</p>
+            {notebook.selectedNotes.length === 0 ? (
+              <p className="notebook-empty">עדיין אין תיעוד. ברגע שתתחיל לשאול, התשובות האחרונות יופיעו כאן.</p>
             ) : (
-              <div className="notebook-summary">
-                <p className="notebook-summary__count">
-                  {notebook.conversationSummary.questionCount === 1
-                    ? 'שאלה אחת נשאלה עד כה.'
-                    : `${notebook.conversationSummary.questionCount} שאלות נשאלו עד כה.`}
-                </p>
-                <div className="notebook-messages-list">
-                  {notebook.conversationSummary.messages.map((item, i) => (
-                    <article key={i} className="notebook-message">
-                      <span className="notebook-message__q">{item.question}</span>
-                      <p className="notebook-message__a">{item.cleanAnswer}</p>
-                    </article>
-                  ))}
-                </div>
+              <div className="notebook-list">
+                {notebook.selectedNotes.map((entry) => (
+                  <article key={entry.question} className="notebook-item">
+                    <strong>שאלה:</strong>
+                    <p>{entry.question}</p>
+                    <strong>תגובה:</strong>
+                    <p>{entry.answer}</p>
+                  </article>
+                ))}
               </div>
             )}
           </div>

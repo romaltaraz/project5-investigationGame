@@ -1,8 +1,8 @@
-// src/pages/LoginPage.jsx
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { authAPI } from '../services/api.js';
+import InkReveal from '../components/InkReveal';
 import '../styles/components/login.css';
 
 const LOGIN_NOTES = [
@@ -11,26 +11,24 @@ const LOGIN_NOTES = [
   'מעבר מהיר בין חדר הבריפינג, החשודים והמפקד',
 ];
 
+const HERO_IMAGE =
+  'https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=1200&q=80';
+
 const LoginPage = () => {
   const [username, setUsername] = useState('');
-  const [resetEmail, setResetEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [resetPassword, setResetPassword] = useState('');
-  const [confirmResetPassword, setConfirmResetPassword] = useState('');
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
-  const [resetMode, setResetMode] = useState(false);
 
   const { login } = useAuth();
   const navigate = useNavigate();
+  const heroRef = useRef(null);
+  const cursorRef = useRef(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    setSuccess('');
     setLoading(true);
-
     try {
       const data = await authAPI.login(username, password);
       login(data.user, data.token);
@@ -42,81 +40,113 @@ const LoginPage = () => {
     }
   };
 
-  const handleResetPassword = async (e) => {
-    e.preventDefault();
-    setError('');
-    setSuccess('');
-
-    if (resetPassword !== confirmResetPassword) {
-      setError('הסיסמאות החדשות אינן תואמות');
-      return;
-    }
-
-    if (resetPassword.length < 6) {
-      setError('הסיסמה החדשה חייבת להיות לפחות 6 תווים');
-      return;
-    }
-
-    if (!resetEmail.includes('@')) {
-      setError('יש להזין כתובת מייל תקינה');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const data = await authAPI.forgotPassword(resetEmail, resetPassword);
-      setSuccess(data.message);
-      setPassword('');
-      setResetEmail('');
-      setResetPassword('');
-      setConfirmResetPassword('');
-      setResetMode(false);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+  const handleHeroMouseMove = (e) => {
+    if (!cursorRef.current || !heroRef.current) return;
+    const rect = heroRef.current.getBoundingClientRect();
+    cursorRef.current.style.left = `${e.clientX - rect.left}px`;
+    cursorRef.current.style.top = `${e.clientY - rect.top}px`;
+    cursorRef.current.style.opacity = '1';
   };
 
-  const toggleResetMode = () => {
-    setError('');
-    setSuccess('');
-    setResetEmail('');
-    setResetPassword('');
-    setConfirmResetPassword('');
-    setResetMode((currentMode) => !currentMode);
+  const handleHeroMouseLeave = () => {
+    if (cursorRef.current) cursorRef.current.style.opacity = '0';
   };
 
   return (
     <div className="login-container">
-      <div className="login-card">
-        <div className="login-header">
-          <div className="logo-icon">
-            <span className="logo-emoji">🔍</span>
-          </div>
-          <h1>יחידת החקירות המיוחדת</h1>
-          <p>הזן את פרטיך, סוכן</p>
-          <div className="badge">CLASSIFIED</div>
+
+      {/* ── HERO PANEL ── */}
+      <div
+        className="login-hero"
+        ref={heroRef}
+        onMouseMove={handleHeroMouseMove}
+        onMouseLeave={handleHeroMouseLeave}
+      >
+        <img
+          className="hero-bg"
+          src={HERO_IMAGE}
+          alt=""
+          loading="lazy"
+          draggable="false"
+        />
+
+        {/* Ink reveal canvas — sits above image, carves away on hover */}
+        <InkReveal
+          maskColor={[10, 9, 7]}
+          brushSize={165}
+          lifetime={900}
+          rVary={0.52}
+          maxStamps={220}
+        />
+
+        {/* Layers above the canvas (pointer-events:none so mouse reaches canvas) */}
+        <div className="hero-vignette"   aria-hidden="true" />
+        <div className="hero-scanlines"  aria-hidden="true" />
+        <div className="hero-grain"      aria-hidden="true" />
+
+        {/* CLASSIFIED stamp — top-left corner */}
+        <div className="hero-stamp-wrap" aria-hidden="true">
+          <span className="hero-classified">CLASSIFIED</span>
         </div>
 
-        <form className="login-form" onSubmit={resetMode ? handleResetPassword : handleSubmit}>
-          {resetMode ? (
-            <div className="input-group">
-              <label>מייל</label>
-              <input
-                type="email"
-                value={resetEmail}
-                onChange={(e) => setResetEmail(e.target.value)}
-                placeholder="הזן את המייל שאיתו נרשמת"
-                autoComplete="email"
-                required
-              />
+        {/* Main atmospheric text */}
+        <div className="hero-content">
+          <div className="hero-meta">
+            <span className="hero-unit-code">S.I.U — 2024</span>
+            <span className="hero-meta-divider" />
+            <span className="hero-case-count">03 תיקים פתוחים</span>
+          </div>
+
+          <h2 className="hero-title">
+            <span>יחידת</span>
+            <span>החקירות</span>
+            <span>המיוחדת</span>
+          </h2>
+
+          <p className="hero-sub">כל תיק מחכה לחוקר הנכון</p>
+
+          <div className="hero-case-badges">
+            <span className="hero-badge-tag">תיק #001</span>
+            <span className="hero-badge-tag hero-badge-active">תיק #002</span>
+            <span className="hero-badge-tag">תיק #003</span>
+          </div>
+        </div>
+
+        <p className="hero-hint">הזז עכבר לחשוף</p>
+
+        {/* Custom cursor follows mouse */}
+        <div ref={cursorRef} className="hero-cursor" aria-hidden="true" />
+      </div>
+
+      {/* ── FORM PANEL ── */}
+      <div className="login-panel">
+        <div className="login-card">
+
+          <div className="login-header">
+            <div className="logo-icon" aria-hidden="true">
+              <svg
+                width="26" height="26"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.35-4.35" />
+              </svg>
             </div>
-          ) : (
+            <h1>כניסה לחוקרים</h1>
+            <p>הזן את פרטיך, סוכן</p>
+            <div className="badge">CLASSIFIED</div>
+          </div>
+
+          <form className="login-form" onSubmit={handleSubmit}>
             <div className="input-group">
-              <label>שם סוכן / קוד זיהוי</label>
+              <label htmlFor="login-username">שם סוכן / קוד זיהוי</label>
               <input
+                id="login-username"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -125,38 +155,11 @@ const LoginPage = () => {
                 required
               />
             </div>
-          )}
 
-          {resetMode ? (
-            <>
-              <div className="input-group">
-                <label>סיסמה חדשה</label>
-                <input
-                  type="password"
-                  value={resetPassword}
-                  onChange={(e) => setResetPassword(e.target.value)}
-                  placeholder="לפחות 6 תווים"
-                  autoComplete="new-password"
-                  required
-                />
-              </div>
-
-              <div className="input-group">
-                <label>אימות סיסמה חדשה</label>
-                <input
-                  type="password"
-                  value={confirmResetPassword}
-                  onChange={(e) => setConfirmResetPassword(e.target.value)}
-                  placeholder="הזן שוב את הסיסמה החדשה"
-                  autoComplete="new-password"
-                  required
-                />
-              </div>
-            </>
-          ) : (
             <div className="input-group">
-              <label>סיסמה</label>
+              <label htmlFor="login-password">סיסמה</label>
               <input
+                id="login-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -165,36 +168,31 @@ const LoginPage = () => {
                 required
               />
             </div>
-          )}
 
-          {error && <div className="error-message">{error}</div>}
-          {success && <div className="success-message">{success}</div>}
+            {error && (
+              <div className="error-message" role="alert">{error}</div>
+            )}
 
-          <button type="submit" className="login-button" disabled={loading}>
-            {loading ? 'מעבד...' : resetMode ? 'אפס סיסמה' : 'התחבר לחקירה'}
-          </button>
-        </form>
+            <button type="submit" className="login-button" disabled={loading}>
+              {loading ? 'מעבד...' : 'כניסה לחקירה'}
+            </button>
+          </form>
 
-        <div className="login-actions">
-          <button type="button" className="toggle-btn toggle-btn--inline" onClick={toggleResetMode}>
-            {resetMode ? 'חזרה להתחברות' : 'שכחתי סיסמה'}
-          </button>
-        </div>
+          <div className="auth-notes">
+            {LOGIN_NOTES.map((note) => (
+              <p key={note} className="auth-note">{note}</p>
+            ))}
+          </div>
 
-        <div className="auth-notes">
-          {LOGIN_NOTES.map((note) => (
-            <p key={note} className="auth-note">
-              {note}
-            </p>
-          ))}
-        </div>
+          <div className="toggle-mode">
+            <Link to="/register" className="toggle-btn">
+              סוכן חדש? צור פרופיל
+            </Link>
+          </div>
 
-        <div className="toggle-mode">
-          <Link to="/register" className="toggle-btn">
-            סוכן חדש? צור פרופיל
-          </Link>
         </div>
       </div>
+
     </div>
   );
 };
