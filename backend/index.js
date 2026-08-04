@@ -6,12 +6,15 @@ import mongoose from 'mongoose';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
+import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { fileURLToPath } from 'url';
 
 import User from './models/User.js';
 import caseRoutes from './routes/cases.js';
 import investigateRoutes from './routes/investigate.js';
 import { authenticateToken } from './middleware/auth.js';
+import { sendPasswordResetCode } from './utils/mailer.js';
 
 dotenv.config();
 const app = express();
@@ -48,6 +51,12 @@ const aiLimiter = rateLimit({ //מגביל רק את החקירה (שאלות ל
   windowMs: 60 * 60 * 1000, // שעה
   max: 40, // הגבלה סבירה ל-AI
   message: { message: 'הגעת למכסת השאלות לשעה. נסי שוב מאוחר יותר.' }
+});
+
+const resetLimiter = rateLimit({ //מגביל בקשת קוד ואימות קוד לאיפוס סיסמה, כדי למנוע ניחוש הקוד בכוח גס
+  windowMs: 15 * 60 * 1000, // 15 דקות
+  max: 5,
+  message: { message: 'יותר מדי ניסיונות, נסי שוב מאוחר יותר' }
 });
 
 app.use(generalLimiter);
@@ -159,26 +168,76 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/forgot-password', async (req, res) => {
+app.post('/api/auth/forgot-password/request', resetLimiter, async (req, res) => {
   try {
-    const { email, newPassword } = req.body;
+    const { email } = req.body;
     const normalizedEmail = email?.trim().toLowerCase();
 
-    if (!normalizedEmail || !newPassword) {
-      return res.status(400).json({ message: 'מייל וסיסמה חדשה הם שדות חובה' });
+    if (!normalizedEmail) {
+      return res.status(400).json({ message: 'מייל הוא שדה חובה' });
+    }
+
+    const genericResponse = { message: 'אם קיים חשבון עם המייל הזה, נשלח אליו קוד אימות' };
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.json(genericResponse); // לא חושפים אם המשתמש קיים
+    }
+
+    const code = crypto.randomInt(100000, 1000000).toString();
+    const salt = await bcrypt.genSalt(10);
+    user.resetCodeHash = await bcrypt.hash(code, salt);
+    user.resetCodeExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 דקות
+    user.resetCodeAttempts = 0;
+    await user.save();
+
+    await sendPasswordResetCode(normalizedEmail, code);
+
+    res.json(genericResponse);
+  } catch (error) {
+    res.status(500).json({ message: 'שגיאה בשרת', error: error.message });
+  }
+});
+
+app.post('/api/auth/forgot-password/verify', resetLimiter, async (req, res) => {
+  try {
+    const { email, code, newPassword } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
+
+    if (!normalizedEmail || !code || !newPassword) {
+      return res.status(400).json({ message: 'מייל, קוד וסיסמה חדשה הם שדות חובה' });
     }
 
     if (newPassword.length < 6) {
       return res.status(400).json({ message: 'הסיסמה החדשה חייבת להיות לפחות 6 תווים' });
     }
 
+    const invalidCodeResponse = { message: 'קוד שגוי או שפג תוקפו' };
     const user = await User.findOne({ email: normalizedEmail });
 
-    if (!user) {
-      return res.status(404).json({ message: 'לא נמצא משתמש עם כתובת המייל הזאת' });
+    if (!user || !user.resetCodeHash || !user.resetCodeExpires || user.resetCodeExpires < new Date()) {
+      return res.status(400).json(invalidCodeResponse);
+    }
+
+    if (user.resetCodeAttempts >= 5) {
+      user.resetCodeHash = null;
+      user.resetCodeExpires = null;
+      await user.save();
+      return res.status(400).json({ message: 'יותר מדי ניסיונות שגויים, יש לבקש קוד חדש' });
+    }
+
+    const isCodeValid = await bcrypt.compare(code, user.resetCodeHash);
+
+    if (!isCodeValid) {
+      user.resetCodeAttempts += 1;
+      await user.save();
+      return res.status(400).json(invalidCodeResponse);
     }
 
     user.password = newPassword;
+    user.resetCodeHash = null;
+    user.resetCodeExpires = null;
+    user.resetCodeAttempts = 0;
     await user.save();
 
     res.json({ message: 'הסיסמה אופסה בהצלחה. אפשר להתחבר עם הסיסמה החדשה.' });

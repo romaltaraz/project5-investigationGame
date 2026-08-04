@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import Dashboard from './pages/Dashboard';
 import BriefingPage from './pages/BriefingPage';
 import GamePage from './pages/GamePage';
@@ -49,6 +50,14 @@ function App() {
             element={(
               <RouteGuard requiresAuth={false}>
                 <RegisterPage />
+              </RouteGuard>
+            )}
+          />
+          <Route
+            path="/forgot-password"
+            element={(
+              <RouteGuard requiresAuth={false}>
+                <ForgotPasswordPage />
               </RouteGuard>
             )}
           />

@@ -40,6 +40,9 @@ const userSchema = new mongoose.Schema({
     default: [],
     validate: [arrayLimit, 'לא ניתן לנהל יותר מ-3 תיקים במקביל']
   },
+  resetCodeHash: { type: String, default: null },
+  resetCodeExpires: { type: Date, default: null },
+  resetCodeAttempts: { type: Number, default: 0 },
 }, { timestamps: true });// מוסיף אוטומטית createdAt ו-updatedAt שמוסיפים תאריכים של יצירת ועדכון המשתמש
 
 // Hash password before save

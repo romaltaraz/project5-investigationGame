@@ -176,6 +176,12 @@ const LoginPage = () => {
             <button type="submit" className="login-button" disabled={loading}>
               {loading ? 'מעבד...' : 'כניסה לחקירה'}
             </button>
+
+            <div className="toggle-mode">
+              <Link to="/forgot-password" className="toggle-btn">
+                שכחת סיסמה?
+              </Link>
+            </div>
           </form>
 
           <div className="auth-notes">
