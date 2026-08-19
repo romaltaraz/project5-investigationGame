@@ -14,17 +14,24 @@ const parseResponse = async (response) => {
   return text ? { message: text } : {};
 };
 
+const DEFAULT_TIMEOUT_MS = 30000;
+
 const request = async (endpoint, options = {}) => {
   const token = localStorage.getItem('token');
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchOptions } = options;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(`${BASE_URL}${endpoint}`, {
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...options.headers,
+        ...fetchOptions.headers,
       },
-      ...options,
+      signal: controller.signal,
+      ...fetchOptions,
     });
 
     const data = await parseResponse(response);
@@ -37,11 +44,17 @@ const request = async (endpoint, options = {}) => {
 
     return data;
   } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('הבקשה לקחה יותר מדי זמן ובוטלה. נסה שוב.');
+    }
+
     if (error instanceof TypeError) {
       throw new Error('לא ניתן להתחבר לשרת. ודא שהבקאנד פועל ושהכתובת תקינה.');
     }
 
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 
@@ -85,6 +98,7 @@ export const casesAPI = {
     request('/api/cases/generate', {
       method: 'POST',
       body: JSON.stringify({ difficulty, commanderPersonality }),
+      timeoutMs: 45000,
     }),
 
   updateNotes: (caseId, investigatorNotes) =>

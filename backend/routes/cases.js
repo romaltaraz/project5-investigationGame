@@ -5,7 +5,16 @@ import Case from '../models/Case.js';
 import User from '../models/User.js';
 import { authenticateToken } from '../middleware/auth.js';
 import OpenAI from 'openai';
-import { EVIDENCE_TYPES, buildFallbackCaseData, buildCasePrompt, enrichCaseText } from '../caseFactory.js';
+import {
+  EVIDENCE_TYPES,
+  buildCaseSkeleton,
+  buildFallbackCaseData,
+  enrichCaseText,
+  buildCommanderAndBackstoryPrompt,
+  buildBriefingDetailsPrompt,
+  buildSuspectsDetailPrompt,
+  buildEvidencePrompt,
+} from '../caseFactory.js';
 import { generateEvidenceAssets } from '../services/evidenceAssets.js';
 
 const router = express.Router();
@@ -136,10 +145,32 @@ const normalizeSuspects = (suspects = [], baseSuspects = []) => {
   }));
 };
 
+// Guarantees every evidence type appears at least once by relabeling spare
+// duplicates — e.g. two "recording" items and no "photo" becomes one of each.
+const ensureEvidenceTypeCoverage = (items) => {
+  const counts = {};
+  items.forEach((item) => { counts[item.type] = (counts[item.type] || 0) + 1; });
+
+  const missingTypes = EVIDENCE_TYPES.filter((type) => !counts[type]);
+  if (missingTypes.length === 0) {
+    return items;
+  }
+
+  const result = [...items];
+  for (const missingType of missingTypes) {
+    const donorIndex = result.findIndex((item) => counts[item.type] > 1);
+    if (donorIndex === -1) break;
+    counts[result[donorIndex].type] -= 1;
+    counts[missingType] = (counts[missingType] || 0) + 1;
+    result[donorIndex] = { ...result[donorIndex], type: missingType };
+  }
+  return result;
+};
+
 const normalizeEvidence = (evidence = [], baseEvidence = []) => {
   const source = Array.isArray(evidence) && evidence.length >= 4 ? evidence : baseEvidence;
 
-  return source.slice(0, 6).map((item, index) => ({
+  const normalized = source.slice(0, 6).map((item, index) => ({
     type: EVIDENCE_TYPES.includes(item?.type) ? item.type : (baseEvidence[index]?.type || 'document'),
     description: item?.description || baseEvidence[index]?.description || `ראיה ${index + 1}`,
     hiddenClue: item?.hiddenClue || item?.hidden_clue || baseEvidence[index]?.hiddenClue || '',
@@ -151,6 +182,8 @@ const normalizeEvidence = (evidence = [], baseEvidence = []) => {
     assetGeneratedAt: item?.assetGeneratedAt || baseEvidence[index]?.assetGeneratedAt || null,
     assetTranscript: item?.assetTranscript || baseEvidence[index]?.assetTranscript || '',
   }));
+
+  return ensureEvidenceTypeCoverage(normalized);
 };
 
 const mapEvidenceForStorage = (evidence = {}) => ({
@@ -166,8 +199,7 @@ const mapEvidenceForStorage = (evidence = {}) => ({
   assetTranscript: evidence.assetTranscript || '',
 });
 
-const normalizeCaseData = (caseData, difficulty, commanderPersonality) => {
-  const fallback = buildFallbackCaseData(difficulty, commanderPersonality);
+const normalizeCaseData = (caseData, difficulty, commanderPersonality, fallback = buildFallbackCaseData(difficulty, commanderPersonality)) => {
 
   const normalizedCase = {
     caseName: caseData?.caseName || fallback.caseName,
@@ -253,43 +285,76 @@ router.post('/generate', authenticateToken, async (req, res) => {
       });
     }
 
-    let caseData;
+    // בונים "שלד" תיק באופן מקומי ומיידי (בלי AI): זירה, שעה, שמות ותפקידי המעורבים, מי אשם.
+    // זה מבטיח שכל קריאות ה-AI המקביליות מתייחסות לאותם עובדות בדיוק, וגם משמש רשת ביטחון
+    // עקבית אם קריאה מסוימת נכשלת (הנפילה חוזרת לאותו שלד, לא לתיק אקראי אחר).
+    const skeleton = buildCaseSkeleton();
+    const fallback = buildFallbackCaseData(difficulty, commanderPersonality, skeleton);
 
-    try {
-      const openai = new OpenAI({
-        apiKey: process.env.NVIDIA_API_KEY,
-        baseURL: 'https://integrate.api.nvidia.com/v1',
-      });
+    const openai = new OpenAI({
+      apiKey: process.env.NVIDIA_API_KEY,
+      baseURL: 'https://integrate.api.nvidia.com/v1',
+    });
 
-      const aiResponse = await openai.chat.completions.create({
-        model: 'meta/llama-3.3-70b-instruct',
-        temperature: 0.7,
-        messages: [
-          {
-            role: 'system',
-            content: `אתה מנוע יצירת תיקי חקירה מקצועיים עם עברית טבעית, מדויקת ועשירה.
-            כתוב כמו תסריטאי ישראלי מנוסה, לא כמו תרגום מאנגלית.
-            צור תיק מרתק, הגיוני ועקבי, עם פירוט קונקרטי בכל שדה טקסטואלי.
-            אם ניסוח כלשהו נשמע גנרי, קצר מדי או לא טבעי, נסח אותו מחדש לפני ההחזרה.
-            חשוב מאוד: אין להשתמש בגרשיים (") בתוך ערכי מחרוזות ב-JSON. במקום ד"ר כתוב ד׳ר, במקום ר"ל כתוב ר׳ל וכדומה.
-            החזר רק JSON תקין ללא טקסט נוסף.`
-          },
-          {
-            role: 'user',
-            content: buildCasePrompt(difficulty, commanderPersonality)
-          }
-        ]
-      });
+    const SYSTEM_PROMPT = `אתה מנוע יצירת תיקי חקירה מקצועיים עם עברית טבעית, מדויקת ועשירה.
+    כתוב כמו תסריטאי ישראלי מנוסה, לא כמו תרגום מאנגלית.
+    שמור בקפידה על העובדות שנמסרות לך (זירה, שעה, שמות, תפקידים) בלי לשנות אותן.
+    החזר רק JSON תקין ללא טקסט נוסף.`;
 
-      const raw = aiResponse.choices?.[0]?.message?.content || '';
-      console.log('🤖 AI raw response (first 500):', raw.substring(0, 500));
-      caseData = parseAiCasePayload(raw);
-    } catch (generationError) {
-      console.error('⚠️ AI generation failed, using fallback case:', generationError.message);
-      caseData = buildFallbackCaseData(difficulty, commanderPersonality);
-    }
+    const runSection = async (label, prompt) => {
+      try {
+        const aiResponse = await openai.chat.completions.create({
+          model: 'meta/llama-3.3-70b-instruct',
+          temperature: 0.7,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: prompt },
+          ],
+        });
 
-    const normalizedCase = normalizeCaseData(caseData, difficulty, commanderPersonality);
+        const raw = aiResponse.choices?.[0]?.message?.content || '';
+        return parseAiCasePayload(raw);
+      } catch (sectionError) {
+        console.error(`⚠️ AI section "${label}" failed, will fall back:`, sectionError.message);
+        return null;
+      }
+    };
+
+    // עד 4 קריאות AI במקביל, כל אחת מייצרת חלק אחר וקטן יותר של התיק על בסיס אותו שלד -
+    // מקצר משמעותית את זמן ההמתנה הכולל לעומת קריאה אחת גדולה שמייצרת הכול ברצף.
+    const [commanderResult, briefingResult, suspectsResult, evidenceResult] = await Promise.all([
+      runSection('commander/backstory', buildCommanderAndBackstoryPrompt(skeleton, difficulty, commanderPersonality)),
+      runSection('briefingDetails', buildBriefingDetailsPrompt(skeleton, difficulty)),
+      runSection('suspects', buildSuspectsDetailPrompt(skeleton, difficulty)),
+      runSection('evidence', buildEvidencePrompt(skeleton, difficulty)),
+    ]);
+
+    const mergedSuspects = skeleton.baseSuspects.map((suspect, index) => ({
+      ...suspect,
+      ...(Array.isArray(suspectsResult?.suspects) ? suspectsResult.suspects[index] : undefined),
+    }));
+
+    const caseData = {
+      caseName: skeleton.caseName,
+      commanderBrief: commanderResult?.commanderBrief,
+      backstory: commanderResult?.backstory,
+      briefingDetails: {
+        incidentTime: skeleton.incidentTime,
+        incidentLocation: skeleton.location,
+        incidentSummary: skeleton.scenario.incident,
+        ...briefingResult,
+      },
+      solution: {
+        culprit: skeleton.culprit,
+        method: skeleton.method,
+        motive: skeleton.motive,
+        explanation: commanderResult?.solutionExplanation,
+      },
+      suspects: mergedSuspects,
+      evidence: evidenceResult?.evidence,
+    };
+
+    const normalizedCase = normalizeCaseData(caseData, difficulty, commanderPersonality, fallback);
 
     const newCase = await Case.create({
       userId,

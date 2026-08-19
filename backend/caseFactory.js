@@ -283,41 +283,62 @@ const buildBriefingDetails = (scenario, location, suspects, evidence, incidentTi
   };
 };
 
-const buildFallbackCaseData = (difficulty, commanderPersonality) => {
+const buildCaseSkeleton = () => {
   const scenario = randomItem(CASE_SCENARIOS);
   const location = randomItem(LOCATIONS);
   const incidentTime = randomItem(INCIDENT_TIMES);
   const names = uniqueNames(5);
   const culpritIndex = Math.floor(Math.random() * names.length);
   const culprit = names[culpritIndex];
+  const method = randomItem(scenario.methodOptions);
+  const motive = randomItem(scenario.motiveOptions);
 
-  const suspects = names.map((name, index) => {
+  const baseSuspects = names.map((name, index) => {
     const role = randomItem(ROLES);
 
     return {
       name,
       role,
       involvementType: deriveInvolvementTypeFromRole(role),
-      personality: randomItem(PERSONALITIES),
-      alibi: buildAlibi(name, location, role, index),
-      secret: SECRET_TEMPLATES[index % SECRET_TEMPLATES.length],
       isGuilty: index === culpritIndex,
     };
   });
 
-  const method = randomItem(scenario.methodOptions);
-  const motive = randomItem(scenario.motiveOptions);
+  return {
+    scenario,
+    location,
+    incidentTime,
+    names,
+    culpritIndex,
+    culprit,
+    method,
+    motive,
+    baseSuspects,
+    caseName: `${scenario.theme} ב-${location}`,
+  };
+};
+
+const buildFallbackCaseData = (difficulty, commanderPersonality, skeleton = buildCaseSkeleton()) => {
+  const { scenario, location, incidentTime, culprit, method, motive, baseSuspects, caseName } = skeleton;
+
+  const suspects = baseSuspects.map((suspect, index) => ({
+    ...suspect,
+    personality: randomItem(PERSONALITIES),
+    alibi: buildAlibi(suspect.name, location, suspect.role, index),
+    secret: SECRET_TEMPLATES[index % SECRET_TEMPLATES.length],
+  }));
+
   const evidence = buildEvidence(scenario, culprit, location);
   const briefingDetails = buildBriefingDetails(scenario, location, suspects, evidence, incidentTime);
   const narrativeContext = buildNarrativeContext({
-    caseName: `${scenario.theme} ב-${location}`,
+    caseName,
     briefingDetails,
     suspects,
     evidence,
   });
 
   return {
-    caseName: `${scenario.theme} ב-${location}`,
+    caseName,
     commanderBrief: buildCommanderBriefText(narrativeContext),
     briefingDetails,
     backstory: buildBackstoryText(narrativeContext, { culprit, method, motive }),
@@ -333,84 +354,91 @@ const buildFallbackCaseData = (difficulty, commanderPersonality) => {
   };
 };
 
-const buildCasePrompt = (difficulty, commanderPersonality) => `צור תיק חקירה חדש, מקורי ולא שגרתי ברמת קושי ${difficulty}.
+const STYLE_INSTRUCTIONS = `כתוב הכול בעברית טבעית, שוטפת, תקינה ועשירה, כאילו נכתבה בידי תסריטאי ישראלי מנוסה.
+אסור לכתוב בעברית שבורה, מתורגמת מאנגלית, רובוטית, מקוטעת או כללית מדי.
+כל שדה טקסטואלי חייב להכיל פרטים קונקרטיים מתוך המקרה עצמו: זמן, מקום, יחסים בין הדמויות, אינטרסים וסתירות.
+אם ניסוח כלשהו נשמע גנרי, קצר מדי או לא טבעי, נסח אותו מחדש לפני ההחזרה.
+אל תשתמש בביטויים חלשים כמו "משהו קרה", "בעיה", "תיאור קצר", "לא ידוע" או "יש סתירה" בלי לפרט מהי.
+החזר רק JSON תקין ללא טקסט נוסף, ובלי גרשיים (") בתוך ערכי מחרוזות (במקום ד"ר כתוב ד׳ר).`;
+
+const buildSuspectRosterLine = (skeleton) => skeleton.baseSuspects
+  .map((suspect) => `${suspect.name} (${suspect.role})`)
+  .join(', ');
+
+const buildCommanderAndBackstoryPrompt = (skeleton, difficulty, commanderPersonality) => `צור עבור תיק חקירה ברמת קושי ${difficulty} שלושה טקסטים דרמטיים בעברית.
 אישיות המפקד: ${commanderPersonality}.
 
-החקירה לא חייבת להיות רצח. אפשר לבחור גם בהיעלמות, גניבה, חבלה, הדלפת מידע, סחיטה, הונאה או מוות חשוד.
-בכל יצירה בחר זירה אחרת, דינמיקה אחרת בין הדמויות, וסוג תעלומה שונה ככל האפשר.
-כתוב את כל התשובה בעברית טבעית, שוטפת, תקינה ועשירה, כאילו נכתבה בידי תסריטאי ישראלי מנוסה.
-אסור לכתוב בעברית שבורה, מתורגמת מאנגלית, רובוטית, מקוטעת או כללית מדי.
-כל שדה טקסטואלי חייב להכיל פרטים קונקרטיים מתוך המקרה עצמו: זמן, מקום, יחסים בין הדמויות, אינטרסים, סתירות, ומה המשמעות החקירתית שלהם.
-אם ניסוח כלשהו נשמע גנרי, קצר מדי או לא טבעי, נסח אותו מחדש לפני ההחזרה.
+הקשר התיק (קבוע, אל תשנה אותו): הזירה היא ${skeleton.location}, האירוע הוא "${skeleton.scenario.incident}", חלון הזמן הקריטי הוא ${skeleton.incidentTime}.
+המעורבים המרכזיים: ${buildSuspectRosterLine(skeleton)}.
+מאחורי הקלעים (סודי, לשימוש פנימי בלבד): האחראי בפועל הוא ${skeleton.culprit}, שפעל באמצעות "${skeleton.method}", מתוך מניע של "${skeleton.motive}".
 
-החזר JSON תקין בלבד בפורמט:
+${STYLE_INSTRUCTIONS}
+
+החזר JSON בפורמט:
 {
-  "caseName": "שם תיק",
-  "commanderBrief": "בריף דרמטי קצר",
-  "briefingDetails": {
-    "incidentTime": "שעת האירוע או החלון הקריטי",
-    "incidentLocation": "איפה בדיוק קרה הדבר",
-    "incidentSummary": "מה בדיוק קרה במשפט חד וברור",
-    "anomaly": "מה לא מסתדר ולמה זה חריג",
-    "situation": "סיכום מפורט של מצב הפתיחה",
-    "stakes": "למה המקרה דחוף ומה הסיכון אם לא נפעל נכון",
-    "locationContext": "מה מיוחד בזירה ולמה זה חשוב",
-    "timelineMarks": ["ציון זמן 1", "ציון זמן 2", "ציון זמן 3"],
-    "fieldSignals": ["סימן זירה 1", "סימן זירה 2", "סימן זירה 3"],
-    "knownFacts": ["עובדה 1", "עובדה 2", "עובדה 3"],
-    "openingQuestions": ["שאלת פתיחה 1", "שאלת פתיחה 2", "שאלת פתיחה 3"]
-  },
-  "backstory": "רקע מלא וסודי",
-  "solution": {
-    "culprit": "שם",
-    "method": "איך בוצע",
-    "motive": "מניע",
-    "explanation": "הסבר מלא"
-  },
+  "commanderBrief": "בריף דרמטי קצר מהמפקד לחוקר/ת, 3 עד 4 משפטים מלאים ומפורטים - חייב לרתק ולתאר את הדחיפות בלי לרמוז מיהו האחראי בפועל",
+  "backstory": "רקע מלא וסודי על מה שבאמת קרה מאחורי הקלעים, 4 עד 6 משפטים מלאים עם פרטים קונקרטיים",
+  "solutionExplanation": "לפחות 2 משפטים מלאים שמסבירים בפירוט למה דווקא ${skeleton.culprit} אחראי/ת, בהתבסס על השיטה והמניע שניתנו"
+}`;
+
+const buildBriefingDetailsPrompt = (skeleton, difficulty) => `צור עבור תיק חקירה ברמת קושי ${difficulty} את פרטי התדריך הפתיחתי לחוקר/ת, בעברית.
+
+הקשר התיק (קבוע, אל תשנה אותו): הזירה היא ${skeleton.location}, האירוע הוא "${skeleton.scenario.incident}", חלון הזמן הקריטי הוא ${skeleton.incidentTime}.
+המעורבים המרכזיים: ${buildSuspectRosterLine(skeleton)}.
+
+${STYLE_INSTRUCTIONS}
+
+החזר JSON בפורמט:
+{
+  "anomaly": "2 עד 3 משפטים מלאים על מה לא מסתדר ולמה זה חריג",
+  "situation": "2 עד 3 משפטים מלאים שמסכמים את מצב הפתיחה",
+  "stakes": "2 עד 3 משפטים מלאים על למה המקרה דחוף ומה הסיכון אם לא נפעל נכון",
+  "locationContext": "2 עד 3 משפטים מלאים על מה מיוחד בזירה ולמה זה חשוב",
+  "timelineMarks": ["ציון זמן 1 מפורט", "ציון זמן 2 מפורט", "ציון זמן 3 מפורט", "ציון זמן 4 מפורט"],
+  "fieldSignals": ["סימן זירה 1 מפורט", "סימן זירה 2 מפורט", "סימן זירה 3 מפורט"],
+  "knownFacts": ["עובדה 1 מפורטת", "עובדה 2 מפורטת", "עובדה 3 מפורטת"],
+  "openingQuestions": ["שאלת פתיחה 1", "שאלת פתיחה 2", "שאלת פתיחה 3"]
+}`;
+
+const buildSuspectsDetailPrompt = (skeleton, difficulty) => `צור עבור תיק חקירה ברמת קושי ${difficulty} פרופיל חקירתי לכל אחד מהמעורבים הבאים, בעברית, באותו סדר שניתן.
+
+הקשר התיק (קבוע, אל תשנה אותו): הזירה היא ${skeleton.location}, האירוע הוא "${skeleton.scenario.incident}", חלון הזמן הקריטי הוא ${skeleton.incidentTime}.
+רשימת המעורבים לפי הסדר (סודי, לשימוש פנימי בלבד - אל תחשוף מי מהם אשם בטקסט עצמו):
+${skeleton.baseSuspects.map((suspect, index) => `${index + 1}. ${suspect.name}, תפקיד: ${suspect.role}, ${suspect.isGuilty ? 'זהו האחראי בפועל לאירוע' : 'לא אחראי/ת לאירוע'}`).join('\n')}
+
+${STYLE_INSTRUCTIONS}
+
+החזר JSON בפורמט (מערך suspects חייב להכיל בדיוק ${skeleton.baseSuspects.length} איברים, באותו סדר בדיוק כמו הרשימה למעלה):
+{
   "suspects": [
     {
-      "name": "שם מלא",
-      "role": "תפקיד",
-      "involvementType": "suspect או witness",
-      "personality": "אישיות חקירתית",
-      "alibi": "אליבי",
-      "secret": "סוד",
-      "isGuilty": false,
-      "truthProfile": {
-        "liesAbout": ["נושא1"],
-        "nervousTriggers": ["מילה1"],
-        "truthLevel": 0.7
-      },
-      "stressMeter": 0,
-      "breakingPoint": 70
-    }
-  ],
-  "evidence": [
-    {
-      "type": "document",
-      "description": "תיאור הראיה",
-      "hiddenClue": "הרמז הנסתר",
-      "isFound": false
+      "personality": "אישיות חקירתית מנוסחת בעברית טבעית, לא במשפט קצר או טכני",
+      "alibi": "אליבי מנוסח בעברית טבעית עם פרטי זמן ומקום קונקרטיים",
+      "secret": "סוד אישי מנוסח בעברית טבעית שהדמות מסתירה",
+      "truthProfile": { "liesAbout": ["נושא1"], "nervousTriggers": ["מילה1", "מילה2"], "truthLevel": 0.7 }
     }
   ]
-}
+}`;
 
-דרישות:
-- לפחות 4 חשודים עם תפקידים שונים
-- לפחות 4 ראיות
-- commanderBrief חייב להיות באורך 3 עד 4 משפטים מלאים, מפורטים ודרמטיים, ולא משפט פתיחה קצר
-- briefingDetails חייב להכיל פרטים עשירים וברורים, לא משפטים כלליים
-- briefingDetails חייב לכלול במפורש שעה, מקום, תיאור חד של האירוע, הסבר מה חריג, ציר זמן פתיחה וסימני זירה
-- anomaly, situation, stakes ו-locationContext חייבים להיות באורך 2 עד 3 משפטים מלאים כל אחד, עם פרטים אמיתיים מהמקרה
-- backstory חייב להיות באורך 4 עד 6 משפטים מלאים, עם רקע קונקרטי ולא תקציר כללי
-- solution.explanation חייב להיות באורך לפחות 2 משפטים מלאים שמסבירים למה דווקא האשם הזה
-- personality, alibi ו-secret של כל חשוד חייבים להיות מנוסחים בעברית טבעית ולא במשפטים קצרים או טכניים
-- involvementType של כל דמות חייב להיות suspect או witness, בהתאם לכך אם מדובר בחשוד/ה או בעד/ת ראייה
-- סתירות עדינות בין הגרסאות
-- זירה יצירתית ושונה ממקרי עבר
-- אל תחזור על אותו משפט או ניסוח בכמה שדות שונים
-- אל תשתמש בביטויים חלשים כמו "משהו קרה", "בעיה", "תיאור קצר", "לא ידוע" או "יש סתירה" בלי לפרט מהי
-- type של evidence חייב להיות רק אחד מ: ${EVIDENCE_TYPES.join(', ')}`;
+const buildEvidencePrompt = (skeleton, difficulty) => `צור עבור תיק חקירה ברמת קושי ${difficulty} לפחות 4 ולכל היותר 6 פריטי ראיה, בעברית.
+
+הקשר התיק (קבוע, אל תשנה אותו): הזירה היא ${skeleton.location}, האירוע הוא "${skeleton.scenario.incident}".
+מאחורי הקלעים (סודי, לשימוש פנימי בלבד): האחראי בפועל הוא ${skeleton.culprit}.
+
+כלל מחייב: חובה שיהיה בדיוק פריט אחד מכל אחד מהסוגים message, photo, document, recording (ארבעת הסוגים חייבים להופיע, כל אחד פעם אחת). אם אתה יוצר פריט חמישי או שישי, בחר עבורו סוג נוסף לפי שיקולך — אבל אסור שיהיו שני פריטים מאותו סוג לפני שכל ארבעת הסוגים כבר מיוצגים.
+
+${STYLE_INSTRUCTIONS}
+
+החזר JSON בפורמט:
+{
+  "evidence": [
+    {
+      "type": "אחד מ: ${EVIDENCE_TYPES.join(', ')}",
+      "description": "תיאור הראיה בעברית טבעית, עם פרטים קונקרטיים מהזירה",
+      "hiddenClue": "הרמז הנסתר שמקשר בעדינות בין הראיה לבין ${skeleton.culprit}, בלי להיות חד מדי"
+    }
+  ]
+}`;
 
 const enrichCaseText = (caseData = {}, fallbackCase = {}) => {
   const mergedCase = {
@@ -480,4 +508,13 @@ const enrichCaseText = (caseData = {}, fallbackCase = {}) => {
   };
 };
 
-export { EVIDENCE_TYPES, buildFallbackCaseData, buildCasePrompt, enrichCaseText };
+export {
+  EVIDENCE_TYPES,
+  buildCaseSkeleton,
+  buildFallbackCaseData,
+  enrichCaseText,
+  buildCommanderAndBackstoryPrompt,
+  buildBriefingDetailsPrompt,
+  buildSuspectsDetailPrompt,
+  buildEvidencePrompt,
+};

@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { casesAPI } from '../services/api.js';
 import '../styles/components/dashboard.css';
 import DashboardMapHero from '../components/DashboardMapHero';
+import InvestigationLoader from '../components/InvestigationLoader';
 
 const DIFFICULTIES = [
   { value: 'easy', label: 'קל', desc: 'רמזים ברורים, חשודים פחות מתחמקים' },
@@ -130,51 +131,57 @@ export default function Dashboard() {
       {error && <div className="dashboard-error">{error}</div>}
 
       {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+        <div className="modal-overlay" onClick={() => !generating && setShowModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>פתיחת תיק חדש</h2>
-            <p className="modal-intro">ניתן לנהל עד שלושה תיקים פתוחים במקביל. בחר אופי חקירה שמתאים לך.</p>
+            {generating ? (
+              <InvestigationLoader label="בונה תיק חקירה חדש..." />
+            ) : (
+              <>
+                <h2>פתיחת תיק חדש</h2>
+                <p className="modal-intro">ניתן לנהל עד שלושה תיקים פתוחים במקביל. בחר אופי חקירה שמתאים לך.</p>
 
-            <p className="modal-label">רמת קושי</p>
-            <div className="options-grid">
-              {DIFFICULTIES.map((item) => (
-                <div
-                  key={item.value}
-                  className={`option ${difficulty === item.value ? 'active' : ''}`}
-                  onClick={() => setDifficulty(item.value)}
-                >
-                  <strong>{item.label}</strong>
-                  <small>{item.desc}</small>
+                <p className="modal-label">רמת קושי</p>
+                <div className="options-grid">
+                  {DIFFICULTIES.map((item) => (
+                    <div
+                      key={item.value}
+                      className={`option ${difficulty === item.value ? 'active' : ''}`}
+                      onClick={() => setDifficulty(item.value)}
+                    >
+                      <strong>{item.label}</strong>
+                      <small>{item.desc}</small>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
 
-            <p className="modal-label">אישיות המפקד</p>
-            <div className="options-grid">
-              {PERSONALITIES.map((item) => (
-                <div
-                  key={item.value}
-                  className={`option ${commanderPersonality === item.value ? 'active' : ''}`}
-                  onClick={() => setCommanderPersonality(item.value)}
-                >
-                  <strong>{item.label}</strong>
-                  <small>{item.desc}</small>
+                <p className="modal-label">אישיות המפקד</p>
+                <div className="options-grid">
+                  {PERSONALITIES.map((item) => (
+                    <div
+                      key={item.value}
+                      className={`option ${commanderPersonality === item.value ? 'active' : ''}`}
+                      onClick={() => setCommanderPersonality(item.value)}
+                    >
+                      <strong>{item.label}</strong>
+                      <small>{item.desc}</small>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
 
-            <div className="modal-buttons">
-              <button className="cancel-btn" onClick={() => setShowModal(false)}>
-                ביטול
-              </button>
-              <button
-                className="create-btn"
-                onClick={createNewCase}
-                disabled={generating || openSlots === 0}
-              >
-                {generating ? 'יוצר תיק...' : 'צור תיק חדש'}
-              </button>
-            </div>
+                <div className="modal-buttons">
+                  <button className="cancel-btn" onClick={() => setShowModal(false)}>
+                    ביטול
+                  </button>
+                  <button
+                    className="create-btn"
+                    onClick={createNewCase}
+                    disabled={generating || openSlots === 0}
+                  >
+                    צור תיק חדש
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -185,7 +192,7 @@ export default function Dashboard() {
       </div>
 
       {loading ? (
-        <p className="dashboard-state">טוען תיקים...</p>
+        <InvestigationLoader label="טוען תיקים..." />
       ) : activeCases.length === 0 ? (
         <div className="empty-state">
           <p>אין תיקים פעילים</p>

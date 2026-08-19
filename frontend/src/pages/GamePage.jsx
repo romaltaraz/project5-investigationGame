@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { BASE_URL, casesAPI, investigateAPI } from '../services/api.js';
 import { buildCaseNotebook } from '../utils/investigationNotebook.js';
+import InvestigationLoader from '../components/InvestigationLoader';
 import '../styles/components/game.css';
 
 const SuspectPortrait = ({ name = '', size = 44 }) => {
@@ -402,7 +403,7 @@ export default function GamePage() {
     }
   };
 
-  if (loading) return <div className="loading">טוען תיק חקירה...</div>;
+  if (loading) return <InvestigationLoader fullPage label="טוען תיק חקירה..." />;
   if (error && !caseDoc) return <div className="loading">{error}</div>;
   if (!caseDoc) return <div className="loading">תיק לא נמצא</div>;
 

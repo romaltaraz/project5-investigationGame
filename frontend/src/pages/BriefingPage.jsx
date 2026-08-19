@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { BASE_URL, casesAPI } from '../services/api.js';
+import InvestigationLoader from '../components/InvestigationLoader';
 import '../styles/components/briefing.css';
 
 const SuspectPortrait = ({ name = '', size = 52 }) => {
@@ -271,7 +272,11 @@ export default function BriefingPage() {
   };
 
   if (loading) {
-    return <div className="briefing-shell briefing-shell--state">טוען תדרוך מפקד...</div>;
+    return (
+      <div className="briefing-shell briefing-shell--state">
+        <InvestigationLoader label="טוען תדרוך מפקד..." />
+      </div>
+    );
   }
 
   if (error || !caseDoc) {
@@ -284,15 +289,15 @@ export default function BriefingPage() {
         <button className="briefing-back" onClick={() => navigate('/dashboard')}>חזור לחדר המבצעים</button>
 
         <div className="briefing-hero__content">
-          <div className="briefing-hero__meta">
-            <span>{DIFFICULTY_LABELS[caseDoc.difficulty] || caseDoc.difficulty}</span>
-            <span>{COMMANDER_LABELS[caseDoc.commanderPersonality] || 'מפקד תיק'}</span>
-            <span>{caseDoc.status === 'active' ? 'תיק פתוח' : 'תיק סגור'}</span>
-          </div>
-
           <p className="briefing-eyebrow">תדרוך מפקד</p>
           <h1>{caseDoc.caseName}</h1>
           <p className="briefing-summary">כל מה שצריך כדי להיכנס לחקירה בלי עומס מיותר.</p>
+        </div>
+
+        <div className="briefing-hero__meta">
+          <span>{DIFFICULTY_LABELS[caseDoc.difficulty] || caseDoc.difficulty}</span>
+          <span>{COMMANDER_LABELS[caseDoc.commanderPersonality] || 'מפקד תיק'}</span>
+          <span>{caseDoc.status === 'active' ? 'תיק פתוח' : 'תיק סגור'}</span>
         </div>
       </header>
 

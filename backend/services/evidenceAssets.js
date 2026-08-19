@@ -44,7 +44,7 @@ const openai = new OpenAI({
 
 const AI_MODEL = 'meta/llama-3.3-70b-instruct';
 
-// ג”€ג”€ Helper: generate text content via AI ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+// ── Helper: generate text content via AI ────────────────────────────────────
 
 const generateAiText = async (systemPrompt, userPrompt) => {
   const response = await openai.chat.completions.create({
@@ -59,10 +59,10 @@ const generateAiText = async (systemPrompt, userPrompt) => {
   return response.choices[0].message.content.trim();
 };
 
-// ג”€ג”€ Renderers ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+// ── Renderers ────────────────────────────────────────────────────────────────
 
 const renderPhotoSvg = ({ briefingDetails, evidence, index, aiLines }) => {
-  const scene = briefingDetails.incidentLocation || '׳–׳™׳¨׳× ׳”׳׳™׳¨׳•׳¢';
+  const scene = briefingDetails.incidentLocation || 'זירת האירוע';
   const time = briefingDetails.incidentTime || '';
   const lines = (aiLines || [evidence.description || '', evidence.hiddenClue || '']).filter(Boolean);
 
@@ -92,7 +92,7 @@ const renderPhotoSvg = ({ briefingDetails, evidence, index, aiLines }) => {
   <!-- top bar -->
   <rect x="0" y="0" width="1216" height="52" fill="#0f1318" opacity="0.9"/>
   <rect x="0" y="52" width="1216" height="2" fill="#8a6238" opacity="0.7"/>
-  <text x="24" y="34" fill="#d7aa66" font-size="11" font-family="monospace" letter-spacing="3">FORENSIC EVIDENCE  ג€¢  PHOTO ${String(index + 1).padStart(2,'0')}  ג€¢  CLASSIFIED</text>
+  <text x="24" y="34" fill="#d7aa66" font-size="11" font-family="monospace" letter-spacing="3">FORENSIC EVIDENCE  •  PHOTO ${String(index + 1).padStart(2,'0')}  •  CLASSIFIED</text>
   <text x="1192" y="34" fill="#8a6238" font-size="11" font-family="monospace" text-anchor="end">${escapeHtml(time)}</text>
 
   <!-- main frame -->
@@ -117,7 +117,7 @@ const renderPhotoSvg = ({ briefingDetails, evidence, index, aiLines }) => {
 
   <!-- bottom bar inside frame -->
   <rect x="40" y="614" width="760" height="32" fill="#0a0e12" opacity="0.85"/>
-  <text x="56" y="634" fill="#6a7a8a" font-size="10" font-family="monospace">IMG-${String(index + 1).padStart(4,'0')} ג€¢ AUTO-ENHANCED ג€¢ DO NOT DISTRIBUTE</text>
+  <text x="56" y="634" fill="#6a7a8a" font-size="10" font-family="monospace">IMG-${String(index + 1).padStart(4,'0')} • AUTO-ENHANCED • DO NOT DISTRIBUTE</text>
 
   <!-- right panel -->
   <rect x="820" y="76" width="356" height="570" rx="4" fill="#0d1117" stroke="#2a2218" stroke-width="1"/>
@@ -276,14 +276,14 @@ const renderMessageHtml = ({ caseName, evidence, aiMessages, suspects }) => {
 };
 
 const renderDocumentHtml = ({ caseName, briefingDetails, evidence, caseId, aiContent }) => {
-  const sections = (aiContent || '').split(/\n{2,}/).filter(Boolean);
-  const sectionsHtml = sections.map((s) => `<p>${escapeHtml(s)}</p>`).join('\n    ');
+  const sections = (aiContent || "").split(/\n{2,}/).filter(Boolean);
+  const sectionsHtml = sections.map((s) => `<p>${escapeHtml(s)}</p>`).join("\n    ");
 
   return `<!doctype html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8"/>
-  <title>${escapeHtml(caseName)} ג€“ ׳׳¡׳׳ ׳—׳§׳™׳¨׳”</title>
+  <title>${escapeHtml(caseName)} – מסמך חקירה</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Courier New',monospace;background:#f5f0e8;color:#1a1208;padding:40px 20px;min-height:100vh}
@@ -300,27 +300,27 @@ const renderDocumentHtml = ({ caseName, briefingDetails, evidence, caseId, aiCon
 </head>
 <body>
   <div class="page">
-    <div class="stamp">׳¡׳•׳“׳™ ׳‘׳™׳•׳×׳¨</div>
+    <div class="stamp">סודי ביותר</div>
     <div class="letterhead">
-      <h1>׳׳“׳™׳ ׳× ׳™׳©׳¨׳׳  ג€¢  ׳׳©׳˜׳¨׳× ׳™׳©׳¨׳׳  ג€¢  ׳׳—׳׳§׳× ׳—׳§׳™׳¨׳•׳×</h1>
+      <h1>מדינת ישראל  •  משטרת ישראל  •  יחידת חקירות</h1>
       <h2>${escapeHtml(caseName)}</h2>
     </div>
     <div class="meta">
-      <div><span>׳׳¡׳₪׳¨ ׳×׳™׳§:</span> OPS-${String(caseId).slice(-6)}</div>
-      <div><span>׳׳™׳§׳•׳:</span> ${escapeHtml(briefingDetails.incidentLocation || '׳׳ ׳¦׳•׳™׳')}</div>
-      <div><span>׳©׳¢׳× ׳׳™׳¨׳•׳¢:</span> ${escapeHtml(briefingDetails.incidentTime || '׳׳ ׳¦׳•׳™׳')}</div>
-      <div><span>׳ ׳•׳©׳:</span> ${escapeHtml(evidence.description || '')}</div>
+      <div><span>מספר תיק:</span> OPS-${String(caseId).slice(-6)}</div>
+      <div><span>מיקום:</span> ${escapeHtml(briefingDetails.incidentLocation || "לא צוין")}</div>
+      <div><span>שעת אירוע:</span> ${escapeHtml(briefingDetails.incidentTime || "לא צוין")}</div>
+      <div><span>נושא:</span> ${escapeHtml(evidence.description || "")}</div>
     </div>
     <div class="content">
       ${sectionsHtml}
     </div>
-    <div class="footer">׳׳¡׳׳ ׳׳¡׳•׳•׳’ ג€“ ׳—׳ ׳׳™׳¡׳•׳¨ ׳¢׳ ׳”׳¢׳‘׳¨׳” ׳׳׳ ׳׳™׳©׳•׳¨ ׳׳₪׳•׳¨׳© ג€¢ ׳ ׳•׳¦׳¨ ׳׳•׳˜׳•׳׳˜׳™׳×</div>
+    <div class="footer">מסמך מסווג – אין להעביר ללא אישור מפורש  •  נוצר אוטומטית</div>
   </div>
 </body>
 </html>`;
 };
 
-// ג”€ג”€ AI prompt builders ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€
+// ── AI prompt builders ───────────────────────────────────────────────────────
 
 const buildPhotoPrompt = ({ briefingDetails, evidence }) => ({
   system: 'אתה חוקר פלילי שכותב תצפיות מקצועיות על תמונות זירת פשע. כתוב בעברית קצרה ועניינית.',

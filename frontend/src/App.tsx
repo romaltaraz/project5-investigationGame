@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import BriefingPage from './pages/BriefingPage';
 import GamePage from './pages/GamePage';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import InvestigationLoader from './components/InvestigationLoader';
 
 function RouteGuard({ children, requiresAuth }) {
   const { loading, isAuthenticated } = useAuth();
@@ -15,7 +16,7 @@ function RouteGuard({ children, requiresAuth }) {
       <div className="screen-loader">
         <div className="screen-loader__panel">
           <span className="screen-loader__eyebrow">Investigation Console</span>
-          <strong>טוען סביבת חקירה...</strong>
+          <InvestigationLoader label="טוען סביבת חקירה..." />
         </div>
       </div>
     );
