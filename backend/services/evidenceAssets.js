@@ -2,6 +2,9 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import OpenAI from 'openai';
+import { buildValidNameSet, DEFAULT_ARTIFACT_TYPE } from './evidenceBlueprint.js';
+import { generateStructuredMessage } from './whatsappEvidence.js';
+import { generateStructuredDocument } from './documentEvidence.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,6 +29,17 @@ const ensureDirectory = async (dirPath) => {
 };
 
 const buildPublicFileUrl = (caseId, filename) => `/generated-evidence/${caseId}/${filename}`;
+
+const HEIGHT_REPORT_SCRIPT = `<script>
+  (function () {
+    function reportHeight() {
+      var h = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+      window.parent.postMessage({ source: 'evidence-frame', height: h }, '*');
+    }
+    window.addEventListener('load', reportHeight);
+    window.addEventListener('resize', reportHeight);
+  })();
+</script>`;
 
 const buildAssetEnvelope = (evidence, filename, mimeType, assetType, extra = {}) => ({
   ...evidence,
@@ -53,7 +67,7 @@ const generateAiText = async (systemPrompt, userPrompt) => {
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
-    max_tokens: 500,
+    max_tokens: 1100, // structured JSON blueprints (messageData/documentData) need headroom beyond short freeform text
     temperature: 0.85,
   });
   return response.choices[0].message.content.trim();
@@ -169,6 +183,11 @@ const renderRecordingHtml = ({ caseName, evidence, transcript, suspects }) => {
   <title>תמלול הקלטה — ${escapeHtml(caseName)}</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
+    html{scrollbar-width:thin;scrollbar-color:rgba(212,173,99,.7) rgba(255,255,255,.04)}
+    ::-webkit-scrollbar{width:10px}
+    ::-webkit-scrollbar-track{background:rgba(255,255,255,.04);border-radius:999px}
+    ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(212,173,99,.9),rgba(196,107,58,.9));border:2px solid rgba(17,13,11,.85);border-radius:999px}
+    ::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#e2bb73,#cf7645)}
     body{font-family:'Courier New',Consolas,monospace;background:#0c0800;color:#c8b060;min-height:100vh}
     .top-bar{background:#1a0800;border-bottom:2px solid #7a3000;padding:10px 20px;display:flex;justify-content:space-between;align-items:center}
     .top-label{font-size:10px;letter-spacing:4px;color:#c03000;text-transform:uppercase}
@@ -215,6 +234,7 @@ const renderRecordingHtml = ({ caseName, evidence, transcript, suspects }) => {
     <span>הקובץ מוגן — שימוש פנימי בלבד</span>
     <span>OPS-INTEL · UNIT 7</span>
   </div>
+  ${HEIGHT_REPORT_SCRIPT}
 </body>
 </html>`;
 };
@@ -243,13 +263,18 @@ const renderMessageHtml = ({ caseName, evidence, aiMessages, suspects }) => {
   <title>${escapeHtml(caseName)} — שיחת WhatsApp</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:'Segoe UI',sans-serif;background:#0a1014;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-    .phone{width:min(400px,100%);background:#111b21;border-radius:18px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+    html{scrollbar-width:thin;scrollbar-color:rgba(212,173,99,.7) rgba(255,255,255,.04)}
+    ::-webkit-scrollbar{width:10px}
+    ::-webkit-scrollbar-track{background:rgba(255,255,255,.04);border-radius:999px}
+    ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(212,173,99,.9),rgba(196,107,58,.9));border:2px solid rgba(17,13,11,.85);border-radius:999px}
+    ::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#e2bb73,#cf7645)}
+    body{font-family:'Segoe UI',sans-serif;background:#0a1014;padding:24px}
+    .phone{width:min(400px,100%);margin:0 auto;background:#111b21;border-radius:18px;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.5)}
     .topbar{background:#1f2c34;padding:14px 18px;display:flex;align-items:center;gap:12px}
     .avatar{width:38px;height:38px;border-radius:50%;background:#2a3f4a;display:flex;align-items:center;justify-content:center;font-size:16px}
     .contact{color:#e9edef;font-size:14px;font-weight:600}
     .status{color:#8696a0;font-size:11px}
-    .body{padding:12px 10px;display:flex;flex-direction:column;gap:6px;min-height:300px;background:#0b141a}
+    .body{padding:12px 10px;display:flex;flex-direction:column;gap:6px;min-height:300px;max-height:420px;overflow-y:auto;background:#0b141a}
     .bubble{padding:8px 12px;border-radius:10px;max-width:82%;font-size:14px;line-height:1.45;color:#e9edef}
     .bubble--other{background:#202c33;align-self:flex-start;border-bottom-right-radius:4px}
     .bubble--self{background:#005c4b;align-self:flex-end;border-bottom-left-radius:4px}
@@ -271,6 +296,7 @@ const renderMessageHtml = ({ caseName, evidence, aiMessages, suspects }) => {
       ${bubbles}
     </div>
   </div>
+  ${HEIGHT_REPORT_SCRIPT}
 </body>
 </html>`;
 };
@@ -286,6 +312,11 @@ const renderDocumentHtml = ({ caseName, briefingDetails, evidence, caseId, aiCon
   <title>${escapeHtml(caseName)} – מסמך חקירה</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
+    html{scrollbar-width:thin;scrollbar-color:rgba(196,107,58,.6) rgba(0,0,0,.06)}
+    ::-webkit-scrollbar{width:10px}
+    ::-webkit-scrollbar-track{background:rgba(0,0,0,.06);border-radius:999px}
+    ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(212,173,99,.9),rgba(196,107,58,.9));border:2px solid rgba(250,247,240,.9);border-radius:999px}
+    ::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#e2bb73,#cf7645)}
     body{font-family:'Courier New',monospace;background:#f5f0e8;color:#1a1208;padding:40px 20px;min-height:100vh}
     .page{max-width:740px;margin:0 auto;background:#faf7f0;border:1px solid #c8b88a;box-shadow:4px 4px 20px rgba(0,0,0,.2);padding:50px 60px;position:relative}
     .stamp{position:absolute;top:32px;left:40px;border:3px solid #aa1111;color:#aa1111;font-size:22px;font-weight:bold;padding:6px 14px;border-radius:4px;transform:rotate(-12deg);opacity:.75;letter-spacing:2px}
@@ -316,6 +347,7 @@ const renderDocumentHtml = ({ caseName, briefingDetails, evidence, caseId, aiCon
     </div>
     <div class="footer">מסמך מסווג – אין להעביר ללא אישור מפורש  •  נוצר אוטומטית</div>
   </div>
+  ${HEIGHT_REPORT_SCRIPT}
 </body>
 </html>`;
 };
@@ -414,6 +446,21 @@ const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, sus
   }
 
   if (evidence.type === 'message') {
+    const validNameSet = buildValidNameSet(suspects);
+    const structured = await generateStructuredMessage({
+      generateAiText, evidence, suspects, briefingDetails, validNameSet, caseName,
+    }).catch(() => null);
+
+    if (structured) {
+      const filename = `${fileBase}.${structured.rendered.extension}`;
+      await fs.writeFile(path.join(caseDir, filename), structured.rendered.content, 'utf8');
+      return buildAssetEnvelope(evidence, filename, structured.rendered.mimeType, 'message', {
+        caseId,
+        messageData: structured.messageData,
+      });
+    }
+
+    // Fallback: pre-existing generic freeform renderer (safe default, no name-identity risk).
     const { system, user } = buildMessagePrompt({ evidence, suspects });
     const aiMessages = await generateAiText(system, user);
     const filename = `${fileBase}.html`;
@@ -422,6 +469,23 @@ const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, sus
   }
 
   if (evidence.type === 'document') {
+    const validNameSet = buildValidNameSet(suspects);
+    const artifactType = evidence.artifactType || DEFAULT_ARTIFACT_TYPE;
+    const structured = await generateStructuredDocument({
+      generateAiText, caseName, briefingDetails, evidence, artifactType, validNameSet, suspects, caseId,
+    }).catch(() => null);
+
+    if (structured) {
+      const filename = `${fileBase}.${structured.rendered.extension}`;
+      await fs.writeFile(path.join(caseDir, filename), structured.rendered.content, 'utf8');
+      return buildAssetEnvelope(evidence, filename, structured.rendered.mimeType, 'document', {
+        caseId,
+        artifactType,
+        documentData: structured.documentData,
+      });
+    }
+
+    // Fallback: pre-existing generic official-report renderer (safe default, no name-identity risk).
     const { system, user } = buildDocumentPrompt({ caseName, briefingDetails, evidence, caseId });
     const aiContent = await generateAiText(system, user);
     const filename = `${fileBase}.html`;

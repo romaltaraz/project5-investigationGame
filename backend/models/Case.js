@@ -16,8 +16,58 @@ const suspectSchema = new mongoose.Schema({
   },
   stressMeter: { type: Number, default: 0, min: 0, max: 100 },
   breakingPoint: { type: Number, default: 70 }, // הנקודה שבה הם נשברים ומודים
-  currentTone: { type: String, enum: ['neutral', 'empathetic', 'aggressive'], default: 'neutral' } // הטון שהחוקר בחר
+  currentTone: { type: String, enum: ['neutral', 'empathetic', 'aggressive'], default: 'neutral' }, // הטון שהחוקר בחר
+
+  // פרופיל כתב יד — משמש ליצירת ראיות מסמך בכתב יד עקבי לאותה דמות בין כמה ראיות
+  writingProfile: {
+    isHandwritten: { type: Boolean, default: true },
+    style: String, // למשל: "כתב יד קטן ומסודר"
+    pressure: String, // "קלה" | "בינונית" | "חזקה"
+    spacing: String, // "צפופה" | "רגילה" | "מרווחת"
+    consistency: String, // "גבוהה" | "בינונית" | "נמוכה"
+  },
+
+  // ── Character identity profiles (structured, optional, backward-compatible) ──
+  // נקבעים פעם אחת ביצירת התיק ולא משתנים בין ראיות — כל ראיה עתידית
+  // (תמונה/הקלטה) שמערבת את הדמות הזו מפנה לאותו פרופיל, לא ממציאה חדש.
+  // ערכים באנגלית מבנית בכוונה: אלה מטא-דאטה לצריכה ע"י מחוללי FLUX/TTS
+  // עתידיים, לא טקסט שמוצג לשחקן (בדיוק כמו writingProfile/secret היום).
+  appearanceProfile: {
+    age: Number,
+    gender: String,
+    hair: String,
+    eyes: String,
+    skinTone: String,
+    bodyType: String,
+    clothingStyle: String,
+    distinctiveFeatures: [String],
+  },
+  voiceProfile: {
+    age: Number,
+    gender: String,
+    pitch: String,
+    speed: String,
+    tone: String,
+    accent: String,
+    personality: String,
+  },
 });
+
+// עותק (לא הפניה) של פרופיל הקול של דמות, מוצמד לראיה ספציפית שבה היא
+// מדברת. שמור בנפרד מ-suspects כדי שראיית אודיו עתידית תהיה עצמאית -
+// לא צריך לחבר בין evidence ל-suspects שוב בזמן יצירת השמע.
+const evidenceVoiceProfileSchema = new mongoose.Schema({
+  name: String,
+  voiceProfile: {
+    age: Number,
+    gender: String,
+    pitch: String,
+    speed: String,
+    tone: String,
+    accent: String,
+    personality: String,
+  },
+}, { _id: false });
 
 // 2. סכמה לראיות (מסמכים, הקלטות וכו')
 const evidenceSchema = new mongoose.Schema({
@@ -31,6 +81,43 @@ const evidenceSchema = new mongoose.Schema({
   assetStatus: { type: String, enum: ['ready', 'missing'], default: 'missing' },
   assetGeneratedAt: Date,
   assetTranscript: String,
+
+  // ── Evidence blueprint (structured, optional, backward-compatible) ──
+  // מטרת הראיה, הרמז המשני, המעורבים והזמן — נשלטים תמיד מתוך נתוני התיק
+  // הקיימים, ולא ממציאים דמויות/עובדות חדשות. שדות אלה אופציונליים כדי
+  // שראיות ישנות בלי המבנה החדש ימשיכו לעבוד בלי מיגרציה.
+  //
+  // primaryClue הוא הרמז המרכזי (המבנה החדש, מקור האמת) - description/
+  // hiddenClue נשארים כשדות legacy ומתמלאים מ-primaryClue/purpose/
+  // secondaryClue כשה-AI לא סיפק אותם ישירות. hiddenClue ממשיך לא להיחשף
+  // ללקוח (ראה serializeEvidenceForClient) - אותה גבולת אבטחה כמו קודם.
+  purpose: String,
+  primaryClue: String,
+  secondaryClue: String,
+  participants: [String],
+  // מיקום ספציפי של הראיה הזו (יכול להיות תת-מיקום מדויק יותר מתוך
+  // briefingDetails.incidentLocation, למשל "מסדרון שירות בקומה השלישית").
+  location: String,
+  timeline: {
+    time: String,
+  },
+  // עובדות חזותיות קונקרטיות וספציפיות לסצנה של הראיה הזו (לא המראה הקבוע
+  // של הדמות - זה כבר ב-suspect.appearanceProfile וייכלל בזמן צריכה עתידי
+  // ע"י FLUX, לא כפול כאן). מיועד ל-buildImagePrompt(evidence, caseData)
+  // עתידי שישלב: appearanceProfile + visualDetails + location + time + primaryClue.
+  visualDetails: [String],
+  // פרופיל קול לכל דמות שמדברת בראיה הזו (בעיקר recording/message), נגזר
+  // תמיד מ-suspect.voiceProfile הקיים - אף פעם לא ממציא פרופיל חדש. מיועד
+  // לצריכה ע"י TTS עתידי.
+  voiceProfiles: [evidenceVoiceProfileSchema],
+  // ה"סוג פיזי" הספציפי של ראיית מסמך (בכתב יד, דו"ח רשמי, רישום גישה וכו').
+  // נפרד מ-type כדי שהרנדור יוכל להשתנות (כולל בעתיד ליצירת תמונה ב-FLUX)
+  // מבלי לשנות את מודל הנתונים.
+  artifactType: String,
+  // תוכן מובנה שנוצר ע"י ה-AI לפני רינדור: הודעות ווטסאפ / תוכן מסמך.
+  // ה-AI אחראי על התוכן, שכבת הרינדור אחראית על האמנות הסופית.
+  messageData: mongoose.Schema.Types.Mixed,
+  documentData: mongoose.Schema.Types.Mixed,
 });
 
 const briefingDetailsSchema = new mongoose.Schema({
@@ -95,7 +182,10 @@ const caseSchema = new mongoose.Schema({
   
   status: {
     type: String,
-    enum: ['active', 'solved', 'failed'],
+    // 'generating' = פלייסהולדר שנשמר עם הזמנת סלוט אטומית, לפני שה-AI סיים לייצר את התיק.
+    // תופס סלוט פעיל בדיוק כמו 'active', אבל לא ניתן למשחק עד שהיצירה מסתיימת ומעדכנת
+    // את אותו מסמך לסטטוס 'active'.
+    enum: ['generating', 'active', 'solved', 'failed'],
     default: 'active'
   }
 }, { timestamps: true }); // מוסיף אוטומטית createdAt ו-updatedAt

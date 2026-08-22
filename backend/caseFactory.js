@@ -1,3 +1,5 @@
+import { DOCUMENT_ARTIFACT_TYPES } from './services/evidenceBlueprint.js';
+
 const EVIDENCE_TYPES = ['message', 'photo', 'document', 'recording'];
 const INCIDENT_TIMES = ['19:40', '20:15', '20:55', '21:20', '22:10', '23:05'];
 
@@ -408,6 +410,8 @@ ${skeleton.baseSuspects.map((suspect, index) => `${index + 1}. ${suspect.name}, 
 
 ${STYLE_INSTRUCTIONS}
 
+לכל דמות הוסף גם appearanceProfile ו-voiceProfile: פרופיל זהות קבוע שישמש בעתיד ליצירת תמונות והקלטות עקביות לאותה דמות. כתוב את הערכים באנגלית מבנית קצרה (לא עברית, לא משפטים) - זו מטא-דאטה טכנית, לא טקסט שהשחקן רואה. שמור על עקביות פנימית (לדוגמה גיל שמתאים לתפקיד).
+
 החזר JSON בפורמט (מערך suspects חייב להכיל בדיוק ${skeleton.baseSuspects.length} איברים, באותו סדר בדיוק כמו הרשימה למעלה):
 {
   "suspects": [
@@ -415,7 +419,10 @@ ${STYLE_INSTRUCTIONS}
       "personality": "אישיות חקירתית מנוסחת בעברית טבעית, לא במשפט קצר או טכני",
       "alibi": "אליבי מנוסח בעברית טבעית עם פרטי זמן ומקום קונקרטיים",
       "secret": "סוד אישי מנוסח בעברית טבעית שהדמות מסתירה",
-      "truthProfile": { "liesAbout": ["נושא1"], "nervousTriggers": ["מילה1", "מילה2"], "truthLevel": 0.7 }
+      "truthProfile": { "liesAbout": ["נושא1"], "nervousTriggers": ["מילה1", "מילה2"], "truthLevel": 0.7 },
+      "writingProfile": { "style": "תיאור כתב היד (למשל: כתב יד קטן ומסודר)", "pressure": "קלה/בינונית/חזקה", "spacing": "צפופה/רגילה/מרווחת", "consistency": "גבוהה/בינונית/נמוכה" },
+      "appearanceProfile": { "age": 34, "gender": "female/male", "hair": "e.g. long brown hair", "eyes": "e.g. brown", "skinTone": "e.g. light", "bodyType": "e.g. slim", "clothingStyle": "e.g. casual elegant", "distinctiveFeatures": ["e.g. silver bracelet"] },
+      "voiceProfile": { "age": 34, "gender": "female/male", "pitch": "low/medium/high", "speed": "slow/normal/fast", "tone": "e.g. calm", "accent": "e.g. Israeli", "personality": "e.g. confident but slightly nervous" }
     }
   ]
 }`;
@@ -424,8 +431,21 @@ const buildEvidencePrompt = (skeleton, difficulty) => `צור עבור תיק ח
 
 הקשר התיק (קבוע, אל תשנה אותו): הזירה היא ${skeleton.location}, האירוע הוא "${skeleton.scenario.incident}".
 מאחורי הקלעים (סודי, לשימוש פנימי בלבד): האחראי בפועל הוא ${skeleton.culprit}.
+הדמויות הקיימות בתיק (אסור בהחלט להמציא דמות נוספת או שם נוסף מעבר לרשימה הזאת): ${buildSuspectRosterLine(skeleton)}.
 
 כלל מחייב: חובה שיהיה בדיוק פריט אחד מכל אחד מהסוגים message, photo, document, recording (ארבעת הסוגים חייבים להופיע, כל אחד פעם אחת). אם אתה יוצר פריט חמישי או שישי, בחר עבורו סוג נוסף לפי שיקולך — אבל אסור שיהיו שני פריטים מאותו סוג לפני שכל ארבעת הסוגים כבר מיוצגים.
+
+לכל פריט הוסף גם:
+- "purpose": מה תפקיד הראיה בחקירה (למשל "לסתור את האליבי של X")
+- "primaryClue": הרמז המרכזי העובדתי שהשחקן אמור לגלות מהראיה הזאת, מנוסח כעובדה קונקרטיות (מי, מה, איפה, מתי) - זה מקור האמת של הראיה, לא תיאור כללי
+- "secondaryClue": רמז משני, עדין יותר, שהופך לשימושי בשילוב עם ראיות אחרות (אופציונלי, אפשר מחרוזת ריקה)
+- "participants": מערך של 0 עד 2 שמות מתוך רשימת הדמויות הקיימות בלבד, של מי שקשור ישירות לראיה הזאת (למשל שני הצדדים לשיחה, או מי שכתב/חתום על מסמך). אסור לשים שם שלא ברשימת הדמויות.
+- "location": תת-מיקום מדויק בתוך ${skeleton.location} שבו הראיה הזאת מתרחשת (למשל "מסדרון שירות בקומה השלישית"), לא סתם חזרה על שם הזירה הכללית
+- "time": שעה משוערת (פורמט HH:MM) שבה האירוע שמתועד בראיה הזאת קרה, בדרך כלל קרוב לחלון הזמן הקריטי ${skeleton.incidentTime}
+- "visualDetails": מערך של 3 עד 5 עובדות חזותיות קונקרטיות וספציפיות לסצנה הזו בלבד (חפצים, תנוחה, תאורה, מיקום מדויק) - אסור לתאר כאן את המראה הקבוע של הדמות עצמה (שיער, גובה וכו'), רק מה שקורה/נראה בסצנה הספציפית הזו
+
+לפריטים מסוג "document" בלבד, הוסף גם:
+- "artifactType": אחד מ: ${DOCUMENT_ARTIFACT_TYPES.join(', ')}. בחר את הסוג שהכי הגיוני לתוכן ולסיפור (למשל פתק שהושאר בכיס → handwritten_note, רישום גישה למקום מאובטח → security_access_log, מייל שהודפס → printed_email). אל תבחר תמיד official_report.
 
 ${STYLE_INSTRUCTIONS}
 
@@ -435,7 +455,15 @@ ${STYLE_INSTRUCTIONS}
     {
       "type": "אחד מ: ${EVIDENCE_TYPES.join(', ')}",
       "description": "תיאור הראיה בעברית טבעית, עם פרטים קונקרטיים מהזירה",
-      "hiddenClue": "הרמז הנסתר שמקשר בעדינות בין הראיה לבין ${skeleton.culprit}, בלי להיות חד מדי"
+      "hiddenClue": "הרמז הנסתר שמקשר בעדינות בין הראיה לבין ${skeleton.culprit}, בלי להיות חד מדי",
+      "purpose": "תפקיד הראיה בחקירה",
+      "primaryClue": "הרמז המרכזי העובדתי, קונקרטי (מי/מה/איפה/מתי)",
+      "secondaryClue": "רמז משני עדין או מחרוזת ריקה",
+      "participants": ["שם מדויק מרשימת הדמויות"],
+      "location": "תת-מיקום מדויק בתוך ${skeleton.location}",
+      "time": "שעה משוערת, פורמט HH:MM",
+      "visualDetails": ["עובדה חזותית ספציפית לסצנה 1", "עובדה חזותית ספציפית לסצנה 2", "עובדה חזותית ספציפית לסצנה 3"],
+      "artifactType": "רק לפריטים מסוג document — אחד מהרשימה שניתנה"
     }
   ]
 }`;

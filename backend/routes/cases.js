@@ -16,6 +16,14 @@ import {
   buildEvidencePrompt,
 } from '../caseFactory.js';
 import { generateEvidenceAssets } from '../services/evidenceAssets.js';
+import {
+  buildValidNameSet,
+  deriveWritingProfile,
+  deriveAppearanceProfile,
+  deriveVoiceProfile,
+  buildVoiceProfilesForParticipants,
+  DOCUMENT_ARTIFACT_TYPES,
+} from '../services/evidenceBlueprint.js';
 
 const router = express.Router();
 
@@ -31,6 +39,57 @@ const buildTruthProfile = (truthProfile = {}, index = 0) => ({
     : ['זמן', 'מיקום', 'כסף', 'מצלמה'].slice(index % 2, (index % 2) + 2),
   truthLevel: clamp(truthProfile.truthLevel, 0, 1, 0.7),
 });
+
+// Falls back to a deterministic per-name profile so handwriting stays
+// consistent across evidence even if the AI never supplies one.
+const buildWritingProfile = (writingProfile = {}, name = '') => (
+  writingProfile?.style
+    ? {
+      isHandwritten: true,
+      style: writingProfile.style,
+      pressure: writingProfile.pressure || 'בינונית',
+      spacing: writingProfile.spacing || 'רגילה',
+      consistency: writingProfile.consistency || 'בינונית',
+    }
+    : deriveWritingProfile(name)
+);
+
+// Same pattern as buildWritingProfile: AI-supplied profile wins when
+// present, otherwise a deterministic per-name fallback so every suspect
+// always has a fully-populated, internally consistent identity — this is
+// the ONE place the profile is established; evidence generation only
+// ever reads it back (see buildVoiceProfilesForParticipants), never
+// regenerates it.
+const buildAppearanceProfile = (appearanceProfile = {}, name = '') => (
+  appearanceProfile?.hair || appearanceProfile?.gender
+    ? {
+      age: typeof appearanceProfile.age === 'number' ? appearanceProfile.age : undefined,
+      gender: appearanceProfile.gender || '',
+      hair: appearanceProfile.hair || '',
+      eyes: appearanceProfile.eyes || '',
+      skinTone: appearanceProfile.skinTone || '',
+      bodyType: appearanceProfile.bodyType || '',
+      clothingStyle: appearanceProfile.clothingStyle || '',
+      distinctiveFeatures: Array.isArray(appearanceProfile.distinctiveFeatures)
+        ? appearanceProfile.distinctiveFeatures.filter(Boolean)
+        : [],
+    }
+    : deriveAppearanceProfile(name)
+);
+
+const buildVoiceProfile = (voiceProfile = {}, name = '') => (
+  voiceProfile?.tone || voiceProfile?.pitch
+    ? {
+      age: typeof voiceProfile.age === 'number' ? voiceProfile.age : undefined,
+      gender: voiceProfile.gender || '',
+      pitch: voiceProfile.pitch || '',
+      speed: voiceProfile.speed || '',
+      tone: voiceProfile.tone || '',
+      accent: voiceProfile.accent || '',
+      personality: voiceProfile.personality || '',
+    }
+    : deriveVoiceProfile(name)
+);
 
 const deriveInvolvementType = (suspect = {}, fallbackSuspect = {}) => {
   const candidate = suspect?.involvementType || suspect?.participantType || fallbackSuspect?.involvementType;
@@ -64,6 +123,10 @@ const serializeEvidenceForClient = (evidence = {}) => ({
   assetStatus: evidence.assetStatus || 'missing',
   assetGeneratedAt: evidence.assetGeneratedAt || null,
   assetTranscript: evidence.assetTranscript || '',
+  // Metadata only — not clue-revealing, safe to expose. purpose/secondaryClue/
+  // messageData/documentData stay server-only, same treatment as hiddenClue.
+  artifactType: evidence.artifactType || '',
+  participants: Array.isArray(evidence.participants) ? evidence.participants : [],
 });
 
 const serializeCaseForClient = (caseDoc) => {
@@ -142,6 +205,9 @@ const normalizeSuspects = (suspects = [], baseSuspects = []) => {
     truthProfile: buildTruthProfile(suspect?.truthProfile, index),
     stressMeter: clamp(suspect?.stressMeter, 0, 100, 0),
     breakingPoint: clamp(suspect?.breakingPoint, 30, 100, 70),
+    writingProfile: buildWritingProfile(suspect?.writingProfile, suspect?.name || baseSuspects[index]?.name),
+    appearanceProfile: buildAppearanceProfile(suspect?.appearanceProfile, suspect?.name || baseSuspects[index]?.name),
+    voiceProfile: buildVoiceProfile(suspect?.voiceProfile, suspect?.name || baseSuspects[index]?.name),
   }));
 };
 
@@ -167,21 +233,65 @@ const ensureEvidenceTypeCoverage = (items) => {
   return result;
 };
 
-const normalizeEvidence = (evidence = [], baseEvidence = []) => {
+// Participants must reference real case characters only. A hallucinated
+// name is dropped, never swapped for a real one — identity is part of the
+// investigation logic, so we'd rather have no participants metadata than
+// a silently wrong one.
+const sanitizeParticipants = (participants, validNameSet) => (Array.isArray(participants)
+  ? participants.map((name) => `${name || ''}`.trim()).filter((name) => name && validNameSet.has(name))
+  : []);
+
+const sanitizeArtifactType = (artifactType) => (DOCUMENT_ARTIFACT_TYPES.includes(artifactType) ? artifactType : '');
+
+const coerceStringArray = (value) => (Array.isArray(value)
+  ? value.map((item) => `${item || ''}`.trim()).filter(Boolean)
+  : []);
+
+// evidence blueprint (structured) → normalized evidence record.
+// primaryClue/purpose are now the canonical source of truth; description/
+// hiddenClue are kept fully populated too (existing consumers — investigate.js
+// stress scoring, whatsappEvidence.js/documentEvidence.js prompts — still read
+// them directly) and only get DERIVED from the new fields as a fallback when
+// the AI didn't supply them, never the other way around.
+const normalizeEvidence = (evidence = [], baseEvidence = [], validNameSet = new Set(), suspects = [], defaultLocation = '') => {
   const source = Array.isArray(evidence) && evidence.length >= 4 ? evidence : baseEvidence;
 
-  const normalized = source.slice(0, 6).map((item, index) => ({
-    type: EVIDENCE_TYPES.includes(item?.type) ? item.type : (baseEvidence[index]?.type || 'document'),
-    description: item?.description || baseEvidence[index]?.description || `ראיה ${index + 1}`,
-    hiddenClue: item?.hiddenClue || item?.hidden_clue || baseEvidence[index]?.hiddenClue || '',
-    isFound: Boolean(item?.isFound),
-    fileUrl: item?.fileUrl || baseEvidence[index]?.fileUrl || '',
-    mimeType: item?.mimeType || baseEvidence[index]?.mimeType || '',
-    assetType: item?.assetType || baseEvidence[index]?.assetType || '',
-    assetStatus: item?.assetStatus || baseEvidence[index]?.assetStatus || 'missing',
-    assetGeneratedAt: item?.assetGeneratedAt || baseEvidence[index]?.assetGeneratedAt || null,
-    assetTranscript: item?.assetTranscript || baseEvidence[index]?.assetTranscript || '',
-  }));
+  const normalized = source.slice(0, 6).map((item, index) => {
+    const purpose = `${item?.purpose || ''}`.trim();
+    const primaryClue = `${item?.primaryClue || ''}`.trim();
+    const secondaryClue = `${item?.secondaryClue || baseEvidence[index]?.secondaryClue || ''}`.trim();
+    const hiddenClue = `${item?.hiddenClue || item?.hidden_clue || baseEvidence[index]?.hiddenClue || ''}`.trim()
+      || primaryClue || secondaryClue;
+    const description = `${item?.description || baseEvidence[index]?.description || ''}`.trim()
+      || [purpose, primaryClue].filter(Boolean).join(' — ')
+      || `ראיה ${index + 1}`;
+    const participants = sanitizeParticipants(item?.participants, validNameSet);
+    const time = `${item?.time || item?.timeline?.time || baseEvidence[index]?.timeline?.time || ''}`.trim();
+
+    return {
+      type: EVIDENCE_TYPES.includes(item?.type) ? item.type : (baseEvidence[index]?.type || 'document'),
+      description,
+      hiddenClue,
+      isFound: Boolean(item?.isFound),
+      fileUrl: item?.fileUrl || baseEvidence[index]?.fileUrl || '',
+      mimeType: item?.mimeType || baseEvidence[index]?.mimeType || '',
+      assetType: item?.assetType || baseEvidence[index]?.assetType || '',
+      assetStatus: item?.assetStatus || baseEvidence[index]?.assetStatus || 'missing',
+      assetGeneratedAt: item?.assetGeneratedAt || baseEvidence[index]?.assetGeneratedAt || null,
+      assetTranscript: item?.assetTranscript || baseEvidence[index]?.assetTranscript || '',
+      purpose,
+      primaryClue,
+      secondaryClue,
+      participants,
+      location: `${item?.location || ''}`.trim() || defaultLocation,
+      timeline: { time },
+      visualDetails: coerceStringArray(item?.visualDetails),
+      // Always re-derived from the case's own suspects — never trusts AI-supplied
+      // voice data, so a character's voice can never drift between evidence items.
+      voiceProfiles: buildVoiceProfilesForParticipants(suspects, participants),
+      artifactType: item?.type === 'document' ? sanitizeArtifactType(item?.artifactType) : '',
+    };
+  });
 
   return ensureEvidenceTypeCoverage(normalized);
 };
@@ -197,6 +307,17 @@ const mapEvidenceForStorage = (evidence = {}) => ({
   assetStatus: evidence.assetStatus || 'missing',
   assetGeneratedAt: evidence.assetGeneratedAt || null,
   assetTranscript: evidence.assetTranscript || '',
+  purpose: evidence.purpose || '',
+  primaryClue: evidence.primaryClue || '',
+  secondaryClue: evidence.secondaryClue || '',
+  participants: Array.isArray(evidence.participants) ? evidence.participants : [],
+  location: evidence.location || '',
+  timeline: { time: evidence.timeline?.time || '' },
+  visualDetails: coerceStringArray(evidence.visualDetails),
+  voiceProfiles: Array.isArray(evidence.voiceProfiles) ? evidence.voiceProfiles : [],
+  artifactType: evidence.artifactType || '',
+  messageData: evidence.messageData || undefined,
+  documentData: evidence.documentData || undefined,
 });
 
 const normalizeCaseData = (caseData, difficulty, commanderPersonality, fallback = buildFallbackCaseData(difficulty, commanderPersonality)) => {
@@ -233,8 +354,14 @@ const normalizeCaseData = (caseData, difficulty, commanderPersonality, fallback 
       explanation: caseData?.solution?.explanation || fallback.solution.explanation,
     },
     suspects: normalizeSuspects(caseData?.suspects, fallback.suspects),
-    evidence: normalizeEvidence(caseData?.evidence, fallback.evidence),
   };
+  normalizedCase.evidence = normalizeEvidence(
+    caseData?.evidence,
+    fallback.evidence,
+    buildValidNameSet(normalizedCase.suspects),
+    normalizedCase.suspects,
+    normalizedCase.briefingDetails.incidentLocation,
+  );
 
   return enrichCaseText(normalizedCase, fallback);
 };
@@ -268,6 +395,8 @@ const parseAiCasePayload = (content = '') => {
 // יצירת תיק חדש עם AI
 // ======================
 router.post('/generate', authenticateToken, async (req, res) => {
+  let reservedCase = null;
+
   try {
     const { difficulty = 'medium', commanderPersonality = 'mentor' } = req.body;
     const userId = req.user.userId;
@@ -275,13 +404,44 @@ router.post('/generate', authenticateToken, async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: 'משתמש לא נמצא' });
 
-    const actualActiveCases = await Case.find({ userId, status: 'active' }).select('_id').lean();
-    const activeCaseIds = actualActiveCases.map((item) => item._id);
-    user.activeCases = activeCaseIds;
-
-    if (activeCaseIds.length >= 3) {
+    // בדיקה מהירה, לא-אטומית, רק כדי לתת הודעת שגיאה זולה בלי לבזבז עבודה במקרה הנפוץ.
+    // המנגנון שבאמת מונע יותר מ-3 תיקים פעילים הוא ההזמנה האטומית שמתחתיה. 'generating'
+    // נספר יחד עם 'active' כי תיק בהכנה תופס סלוט בדיוק כמו תיק שכבר נוצר.
+    const activeCaseCount = await Case.countDocuments({ userId, status: { $in: ['active', 'generating'] } });
+    if (activeCaseCount >= 3) {
       return res.status(400).json({
-        message: `לא ניתן לפתוח יותר מ-3 תיקים פעילים במקביל. כרגע יש לך ${activeCaseIds.length} תיקים פתוחים, אז צריך לסיים תיק קיים קודם.`
+        message: `לא ניתן לפתוח יותר מ-3 תיקים פעילים במקביל. כרגע יש לך ${activeCaseCount} תיקים פתוחים, אז צריך לסיים תיק קיים קודם.`
+      });
+    }
+
+    // שומרים "מקום" מיד, לפני שמתחילים ביצירה עצמה (שלוקחת כמה שניות בגלל קריאות ה-AI).
+    // הפלייסהולדר נשמר בסטטוס 'generating' - תופס סלוט אבל לא מוצג כתיק פעיל וניתן למשחק
+    // עד שהיצירה מסתיימת ומעדכנת את אותו מסמך בדיוק לסטטוס 'active'.
+    reservedCase = await Case.create({
+      userId,
+      caseName: 'תיק בהכנה...',
+      commanderBrief: 'התיק בתהליך יצירה, פרטים מלאים בדרך...',
+      difficulty,
+      commanderPersonality,
+      status: 'generating',
+    });
+
+    // ה-$expr על גודל activeCases רץ כעדכון אטומי על מסמך יחיד, אז שתי בקשות /generate
+    // שמגיעות ממש קרוב אחת לשנייה (למשל בקשה כפולה אחרי שהראשונה נראתה תקועה) לא יכולות
+    // שתיהן לעבור את הבדיקה בו-זמנית ולייצר יחד יותר מ-3 תיקים פעילים. activeCases הוא
+    // מקור האמת היחיד לספירת הסלוטים - Case.status הוא רק שיקוף שלו לתצוגה בלקוח.
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: userId, $expr: { $lt: [{ $size: '$activeCases' }, 3] } },
+      { $push: { activeCases: reservedCase._id } },
+      { new: true }
+    );
+
+    if (!updatedUser) {
+      await Case.findByIdAndDelete(reservedCase._id);
+      reservedCase = null;
+      const currentCount = await Case.countDocuments({ userId, status: { $in: ['active', 'generating'] } });
+      return res.status(400).json({
+        message: `לא ניתן לפתוח יותר מ-3 תיקים פעילים במקביל. כרגע יש לך ${currentCount} תיקים פתוחים, אז צריך לסיים תיק קיים קודם.`
       });
     }
 
@@ -356,44 +516,54 @@ router.post('/generate', authenticateToken, async (req, res) => {
 
     const normalizedCase = normalizeCaseData(caseData, difficulty, commanderPersonality, fallback);
 
-    const newCase = await Case.create({
-      userId,
-      caseName: normalizedCase.caseName,
-      difficulty,
-      commanderPersonality,
-      commanderBrief: normalizedCase.commanderBrief,
-      briefingDetails: normalizedCase.briefingDetails,
-      backstory: normalizedCase.backstory,
-      solution: normalizedCase.solution,
-      suspects: normalizedCase.suspects.map(s => ({
-        name: s.name,
-        role: s.role || 'חשוד',
-        involvementType: s.involvementType || 'suspect',
-        personality: s.personality || s.description || 'אישיות לא ידועה',
-        alibi: s.alibi || '',
-        secret: s.secret || '',
-        isGuilty: s.isGuilty || false,
-        truthProfile: {
-          liesAbout: s.truthProfile?.liesAbout || [],
-          nervousTriggers: s.truthProfile?.nervousTriggers || [],
-          truthLevel: s.truthProfile?.truthLevel ?? 0.7,
-        },
-        stressMeter: s.stressMeter || 0,
-        breakingPoint: s.breakingPoint || 70,
-      })),
-      evidence: normalizedCase.evidence.map(e => ({
-        ...mapEvidenceForStorage(e),
-      })),
-      interactions: []
-    });
+    // מעדכנים את אותו מסמך שהוזמן מראש (לא יוצרים תיק שני!) ומעבירים אותו לסטטוס 'active'.
+    // reservedCase._id כבר נמצא ב-User.activeCases מההזמנה האטומית למעלה, אז אין צורך
+    // בעדכון נוסף על המשתמש כאן.
+    const newCase = await Case.findByIdAndUpdate(
+      reservedCase._id,
+      {
+        caseName: normalizedCase.caseName,
+        difficulty,
+        commanderPersonality,
+        commanderBrief: normalizedCase.commanderBrief,
+        briefingDetails: normalizedCase.briefingDetails,
+        backstory: normalizedCase.backstory,
+        solution: normalizedCase.solution,
+        suspects: normalizedCase.suspects.map(s => ({
+          name: s.name,
+          role: s.role || 'חשוד',
+          involvementType: s.involvementType || 'suspect',
+          personality: s.personality || s.description || 'אישיות לא ידועה',
+          alibi: s.alibi || '',
+          secret: s.secret || '',
+          isGuilty: s.isGuilty || false,
+          truthProfile: {
+            liesAbout: s.truthProfile?.liesAbout || [],
+            nervousTriggers: s.truthProfile?.nervousTriggers || [],
+            truthLevel: s.truthProfile?.truthLevel ?? 0.7,
+          },
+          stressMeter: s.stressMeter || 0,
+          breakingPoint: s.breakingPoint || 70,
+          writingProfile: s.writingProfile,
+          appearanceProfile: s.appearanceProfile,
+          voiceProfile: s.voiceProfile,
+        })),
+        evidence: normalizedCase.evidence.map(e => ({
+          ...mapEvidenceForStorage(e),
+        })),
+        interactions: [],
+        status: 'active',
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!newCase) {
+      throw new Error('התיק השמור מראש לא נמצא בעדכון הסופי');
+    }
     console.log('✅ Case created:', newCase._id);
 
-    try {
-      await User.findByIdAndUpdate(userId, { activeCases: [...activeCaseIds, newCase._id] });
-    } catch (userSaveError) {
-      await Case.findByIdAndDelete(newCase._id);
-      throw userSaveError;
-    }
+    // מהרגע הזה התיק תקין ופעיל ב-DB, אז אין יותר צורך לנקות אותו אם משהו אחר ייכשל בהמשך.
+    reservedCase = null;
 
     // החזרה בטוחה ללקוח (בלי מידע סודי) — שולחים מיד לפני יצירת הנכסים
     res.status(201).json({
@@ -421,6 +591,8 @@ router.post('/generate', authenticateToken, async (req, res) => {
           assetType: e.assetType || '',
           assetStatus: e.assetStatus || 'missing',
           assetTranscript: e.assetTranscript || '',
+          artifactType: e.artifactType || '',
+          participants: e.participants || [],
         }))
       }
     });
@@ -446,7 +618,21 @@ router.post('/generate', authenticateToken, async (req, res) => {
     if (error.name === 'ValidationError') {
       console.error('Mongoose validation:', JSON.stringify(error.errors, null, 2));
     }
-    res.status(500).json({ message: 'שגיאה ביצירת התיק', error: error.message });
+
+    // אם נכשלנו אחרי ששריינו סלוט (reservedCase עדיין לא אופס), חייבים למחוק את
+    // הפלייסהולדר ולשחרר אותו מ-User.activeCases, אחרת הוא נשאר תקוע וחוסם סלוט לתמיד.
+    if (reservedCase) {
+      try {
+        await Case.findByIdAndDelete(reservedCase._id);
+        await User.findByIdAndUpdate(reservedCase.userId, { $pull: { activeCases: reservedCase._id } });
+      } catch (cleanupError) {
+        console.error('⚠️ Failed to release reserved case slot:', cleanupError.message);
+      }
+    }
+
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'שגיאה ביצירת התיק', error: error.message });
+    }
   }
 });
 
@@ -456,7 +642,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const cases = await Case.find({ userId: req.user.userId })
-      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -evidence.hiddenClue')
+      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -suspects.appearanceProfile -suspects.voiceProfile -evidence.hiddenClue -evidence.purpose -evidence.primaryClue -evidence.secondaryClue -evidence.visualDetails -evidence.voiceProfiles -evidence.messageData -evidence.documentData')
       .sort({ createdAt: -1 });
 
     res.json({ cases: cases.map((caseDoc) => serializeCaseForClient(caseDoc)) });
@@ -478,7 +664,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       _id: req.params.id,
       userId: req.user.userId
     })
-      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -evidence.hiddenClue')
+      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -suspects.appearanceProfile -suspects.voiceProfile -evidence.hiddenClue -evidence.purpose -evidence.primaryClue -evidence.secondaryClue -evidence.visualDetails -evidence.voiceProfiles -evidence.messageData -evidence.documentData')
       .lean();
 
     if (!caseDoc) return res.status(404).json({ message: 'תיק לא נמצא' });

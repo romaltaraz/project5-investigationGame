@@ -82,6 +82,28 @@ const EVIDENCE_LABELS = {
   recording: 'הקלטת שמע',
 };
 
+const ARTIFACT_TYPE_LABELS = {
+  handwritten_note: 'פתק בכתב יד',
+  handwritten_letter: 'מכתב בכתב יד',
+  diary_page: 'דף יומן',
+  physical_letter: 'מכתב פיזי',
+  threat_note: 'פתק איום',
+  personal_note: 'פתק אישי',
+  official_report: 'דו"ח רשמי',
+  security_access_log: 'רישום גישה מאובטח',
+  system_log: 'יומן מערכת',
+  meeting_record: 'סיכום פגישה',
+  medical_report: 'דו"ח רפואי',
+  employee_record: 'תיק עובד',
+  investigation_report: 'דו"ח חקירה',
+  internal_memo: 'תזכיר פנימי',
+  invoice: 'חשבונית',
+  receipt: 'קבלה',
+  printed_email: 'הודעת דוא"ל מודפסת',
+  old_fax: 'פקס ישן',
+  scanned_document: 'מסמך סרוק',
+};
+
 const INVOLVEMENT_LABELS = {
   suspect: 'חשוד/ה',
   witness: 'עד/ת ראייה',
@@ -109,6 +131,37 @@ const EVIDENCE_FRAME_HEIGHT = {
   document: 500,
 };
 
+const EvidenceFrame = ({ src, title, frameHeight }) => {
+  const [height, setHeight] = useState(frameHeight);
+  const iframeRef = useRef(null);
+
+  useEffect(() => {
+    const handleMessage = (event) => {
+      if (
+        event.data?.source === 'evidence-frame'
+        && iframeRef.current
+        && event.source === iframeRef.current.contentWindow
+      ) {
+        setHeight(Math.max(120, Math.ceil(event.data.height)));
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  return (
+    <iframe
+      ref={iframeRef}
+      className="evidence-card__frame"
+      src={src}
+      title={title}
+      sandbox="allow-scripts allow-same-origin"
+      style={{ height }}
+      loading="lazy"
+    />
+  );
+};
+
 const renderEvidenceAsset = (item = {}) => {
   const assetUrl = resolveEvidenceAssetUrl(item);
 
@@ -124,17 +177,17 @@ const renderEvidenceAsset = (item = {}) => {
     return <audio className="evidence-card__audio" controls preload="none" src={assetUrl} />;
   }
 
-  if ((item.mimeType || '').startsWith('text/html')) {
+  if ((item.mimeType || '').startsWith('text/html') || (item.mimeType || '').startsWith('application/pdf')) {
     const frameHeight = EVIDENCE_FRAME_HEIGHT[item.type] || 400;
     return (
-      <iframe
-        className="evidence-card__frame"
-        src={assetUrl}
-        title={item.description || 'ראיה'}
-        sandbox="allow-same-origin"
-        style={{ height: frameHeight }}
-        loading="lazy"
-      />
+      <>
+        <EvidenceFrame src={assetUrl} title={item.description || 'ראיה'} frameHeight={frameHeight} />
+        {(item.mimeType || '').startsWith('application/pdf') && (
+          <a className="evidence-card__link" href={assetUrl} target="_blank" rel="noreferrer">
+            הורד/פתח כקובץ PDF
+          </a>
+        )}
+      </>
     );
   }
 
@@ -445,7 +498,10 @@ export default function GamePage() {
           <p className="side-label">ראיות זמינות</p>
           {(caseDoc.evidence || []).map((item, index) => (
             <div key={`${item.type}-${index}`} className="evidence-card">
-              <span>{EVIDENCE_LABELS[item.type] || item.type}</span>
+              <span>
+                {EVIDENCE_LABELS[item.type] || item.type}
+                {ARTIFACT_TYPE_LABELS[item.artifactType] && ` · ${ARTIFACT_TYPE_LABELS[item.artifactType]}`}
+              </span>
               <p>{item.description}</p>
               {renderEvidenceAsset(item)}
               {item.assetTranscript && <p className="evidence-card__transcript">תמלול: {item.assetTranscript}</p>}

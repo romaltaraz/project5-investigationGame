@@ -46,9 +46,12 @@ export default function Dashboard() {
   const [commanderPersonality, setCommanderPersonality] = useState('mentor');
   const [generating, setGenerating] = useState(false);
 
+  // תיק בסטטוס 'generating' תופס סלוט (כמו 'active') אבל אינו ניתן למשחק עדיין,
+  // ולכן לא מוצג כתיק פעיל וגם לא כתיק סגור/ארכיון.
   const activeCases = cases.filter((item) => item.status === 'active');
-  const closedCases = cases.filter((item) => item.status !== 'active').slice(0, 3);
-  const openSlots = Math.max(0, 3 - activeCases.length);
+  const occupiedSlots = cases.filter((item) => item.status === 'active' || item.status === 'generating').length;
+  const closedCases = cases.filter((item) => item.status !== 'active' && item.status !== 'generating').slice(0, 3);
+  const openSlots = Math.max(0, 3 - occupiedSlots);
 
   useEffect(() => {
     fetchCases();

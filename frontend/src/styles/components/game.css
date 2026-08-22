@@ -1,7 +1,8 @@
 /* src/styles/components/game.css */
 
 .game-container {
-  height: 100vh;
+  width: 100%;
+  height: 100dvh;
   overflow: hidden;
   display: grid;
   grid-template-columns: 320px 1fr;
@@ -702,6 +703,15 @@
   .sidebar {
     border-left: none;
     border-bottom: 1px solid var(--border-color);
+  }
+
+  /* Stacking sidebar + chat-area into two auto-sized grid rows means
+     chat-area's own height no longer matches its content (chat-header +
+     messages + input-area + notebook-panel). It previously kept
+     `overflow: hidden` from the desktop layout, which silently clipped
+     whatever didn't fit instead of scrolling to it. */
+  .chat-area {
+    overflow-y: auto;
   }
 
   .action-buttons {
