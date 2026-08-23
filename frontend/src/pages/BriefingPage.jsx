@@ -105,7 +105,7 @@ const renderEvidenceCardPreview = (item = {}) => {
   }
 
   if (getEvidenceViewerType(item) === 'image') {
-    return <img className="briefing-evidence__media" src={assetUrl} alt={item.description || 'ראיית זירה'} loading="lazy" />;
+    return <div className="briefing-evidence__hint">לחץ לצפייה בתמונה</div>;
   }
 
   if (getEvidenceViewerType(item) === 'audio') {

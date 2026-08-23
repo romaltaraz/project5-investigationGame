@@ -416,6 +416,21 @@ router.post('/generate', authenticateToken, async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: 'משתמש לא נמצא' });
 
+    // user.activeCases מתעדכן אוטומטית רק דרך פעולות האפליקציה (למשל סגירת תיק ב-
+    // investigate.js). אם תיק נמחק ישירות ב-Mongo (בעקיפין לגמרי מהאפליקציה), ה-ObjectId
+    // שלו נשאר תקוע במערך ותופס סלוט לשווא. מתקנים את זה כאן לפני בדיקת הסלוטים, כך
+    // שמחיקה ידנית של תיק תשתקף באתר מיד בפעם הבאה שמנסים לפתוח תיק חדש.
+    if (user.activeCases.length > 0) {
+      const existingIds = await Case.find({ _id: { $in: user.activeCases } }).distinct('_id');
+      const existingIdSet = new Set(existingIds.map((id) => id.toString()));
+      const staleIds = user.activeCases.filter((id) => !existingIdSet.has(id.toString()));
+
+      if (staleIds.length > 0) {
+        await User.findByIdAndUpdate(userId, { $pull: { activeCases: { $in: staleIds } } });
+        user.activeCases = user.activeCases.filter((id) => existingIdSet.has(id.toString()));
+      }
+    }
+
     // בדיקה מהירה, לא-אטומית, רק כדי לתת הודעת שגיאה זולה בלי לבזבז עבודה במקרה הנפוץ.
     // המנגנון שבאמת מונע יותר מ-3 תיקים פעילים הוא ההזמנה האטומית שמתחתיה. 'generating'
     // נספר יחד עם 'active' כי תיק בהכנה תופס סלוט בדיוק כמו תיק שכבר נוצר.

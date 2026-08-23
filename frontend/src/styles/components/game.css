@@ -50,7 +50,7 @@
 }
 
 .loading {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -76,6 +76,7 @@
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .back-btn,
@@ -199,8 +200,34 @@
 }
 
 .suspect-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
   cursor: pointer;
   transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease;
+}
+
+.suspect-card__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.suspect-card__id {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.suspect-card__stress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.suspect-card__stress .ekg-container {
+  flex: 1;
 }
 
 .suspect-card:hover {
@@ -250,10 +277,13 @@
   font-size: 0.83rem;
 }
 
-.suspect-role,
 .evidence-card span {
   display: inline-block;
   margin-bottom: 8px;
+}
+
+.stress-label {
+  flex-shrink: 0;
 }
 
 .person-badge {
@@ -310,19 +340,30 @@
   background: rgba(0, 0, 0, 0.16);
 }
 
-.evidence-card__audio {
+.evidence-card__media-locked {
   width: 100%;
   margin-top: 8px;
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.16);
+  color: var(--accent-gold);
+  font-family: var(--font-typewriter);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
 }
 
-.evidence-card__frame {
-  width: 100%;
-  margin-top: 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: 14px;
-  display: block;
-  background: rgba(0, 0, 0, 0.16);
-  overflow: hidden;
+.evidence-card__media-locked:hover {
+  background: rgba(224, 187, 115, 0.1);
+  border-color: var(--accent-gold);
+}
+
+.evidence-card__media-locked-icon {
+  font-size: 1.3rem;
 }
 
 .evidence-card__link {
@@ -345,8 +386,16 @@
 }
 
 .action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
   padding: 12px 14px;
   text-align: right;
+}
+
+.action-btn svg {
+  flex-shrink: 0;
 }
 
 .action-btn:disabled {
@@ -387,6 +436,14 @@
   overflow: hidden;
   padding: 18px;
   flex-direction: column;
+  gap: 12px;
+}
+
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
   gap: 12px;
 }
 
@@ -450,6 +507,7 @@
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   scroll-behavior: smooth;
   padding-inline-end: 10px;
@@ -535,6 +593,7 @@
   flex-shrink: 0;
   max-height: 38vh;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .notebook-panel__head {
@@ -660,8 +719,15 @@
 }
 
 .modal h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 6px;
   color: var(--accent-gold);
+}
+
+.modal h2 svg {
+  flex-shrink: 0;
 }
 
 .modal textarea {
@@ -685,6 +751,10 @@
   text-align: center;
 }
 
+.result-modal h2 {
+  justify-content: center;
+}
+
 .result-modal.success h2 {
   color: #88d488;
 }
@@ -693,23 +763,144 @@
   color: #f1a3a3;
 }
 
+.overlay--evidence {
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.image-lightbox {
+  position: relative;
+  max-width: min(90vw, 900px);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.image-lightbox__img {
+  max-width: 100%;
+  max-height: 80vh;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.image-lightbox__audio {
+  width: min(90vw, 480px);
+}
+
+.image-lightbox__frame {
+  width: min(90vw, 900px);
+  height: 72vh;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: #101010;
+}
+
+.image-lightbox__fallback-text {
+  max-width: min(90vw, 600px);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.image-lightbox__close {
+  padding: 8px 20px;
+  border: 1px solid var(--accent-gold);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent-gold);
+  font-family: var(--font-typewriter);
+  cursor: pointer;
+}
+
+.image-lightbox__close:hover {
+  background: rgba(224, 187, 115, 0.12);
+}
+
+.mobile-tabs {
+  display: none;
+}
+
 @media (max-width: 1024px) {
+  /* Below this width the sidebar (case brief + every suspect + every
+     evidence item) and the chat no longer fit side by side, and this
+     app never lets the page itself scroll (html/body/#root are
+     height:100% + overflow:hidden everywhere). Stacking both as
+     auto-sized grid rows meant their combined content routinely
+     exceeded the 100dvh container and got silently clipped instead of
+     becoming reachable. Instead, show one full-height panel at a time
+     via the mobile tab bar, chat by default. */
   .game-container {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .mobile-tabs {
+    display: flex;
+    flex-shrink: 0;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(31, 27, 24, 0.96);
+  }
+
+  .mobile-tab-btn {
+    flex: 1;
+    padding: 10px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    background: var(--surface-soft);
+    color: var(--text-secondary);
+    font-family: var(--font-typewriter);
+    font-size: 0.76rem;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+  }
+
+  .mobile-tab-btn.active {
+    border-color: rgba(212, 173, 99, 0.6);
+    background: rgba(212, 173, 99, 0.15);
+    color: var(--accent-gold);
+  }
+
+  .sidebar,
+  .chat-area {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+  }
+
+  .sidebar.is-active-mobile,
+  .chat-area.is-active-mobile {
+    display: flex;
   }
 
   .sidebar {
     border-left: none;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: none;
   }
 
-  /* Stacking sidebar + chat-area into two auto-sized grid rows means
-     chat-area's own height no longer matches its content (chat-header +
-     messages + input-area + notebook-panel). It previously kept
-     `overflow: hidden` from the desktop layout, which silently clipped
-     whatever didn't fit instead of scrolling to it. */
-  .chat-area {
-    overflow-y: auto;
+  /* Inside the chat-area tab, the thread (header/messages/input) and the
+     notebook panel are two mutually exclusive mobile views, toggled by
+     the same mobile-tabs bar. */
+  .chat-thread.is-hidden-mobile {
+    display: none;
+  }
+
+  .notebook-panel {
+    display: none;
+  }
+
+  .notebook-panel.is-active-mobile {
+    display: grid;
+    flex: 1;
+    min-height: 0;
+    max-height: none;
   }
 
   .action-buttons {

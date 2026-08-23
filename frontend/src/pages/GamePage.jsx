@@ -43,7 +43,7 @@ const SuspectPortrait = ({ name = '', size = 44 }) => {
 const EkgMeter = ({ stress = 0 }) => {
   const pct   = Math.min(100, Math.max(0, stress));
   const color = pct < 40 ? '#55C878' : pct < 70 ? '#D4AF37' : '#FF4444';
-  const w = 200, h = 28;
+  const w = 200, h = 18;
   const flatY = h / 2;
   const peak  = Math.round((pct / 100) * (h - 6));
   const mid   = w / 2;
@@ -62,6 +62,42 @@ const EkgMeter = ({ stress = 0 }) => {
     </div>
   );
 };
+
+const IconSearch = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="7" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+  </svg>
+);
+
+const IconMic = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="2" width="6" height="12" rx="3" />
+    <path d="M5 10a7 7 0 0 0 14 0" />
+    <line x1="12" y1="19" x2="12" y2="22" />
+    <line x1="8" y1="22" x2="16" y2="22" />
+  </svg>
+);
+
+const IconFlag = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="4" y1="22" x2="4" y2="2" />
+    <path d="M4 4h14l-3 4 3 4H4" />
+  </svg>
+);
+
+const IconCheck = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+);
+
+const IconX = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18" />
+    <line x1="6" y1="6" x2="18" y2="18" />
+  </svg>
+);
 
 const TONE_LABELS = {
   neutral: 'נייטרלי',
@@ -125,76 +161,42 @@ const resolveEvidenceAssetUrl = (item = {}) => {
   return /^https?:\/\//i.test(item.fileUrl) ? item.fileUrl : `${BASE_URL}${item.fileUrl}`;
 };
 
-const EVIDENCE_FRAME_HEIGHT = {
-  message: 380,
-  recording: 420,
-  document: 500,
+const getEvidencePreviewMeta = (item = {}) => {
+  const mimeType = item.mimeType || '';
+
+  if (mimeType.startsWith('image/')) {
+    return { type: 'image', label: 'לחץ לצפייה בתמונה' };
+  }
+
+  if (mimeType.startsWith('audio/')) {
+    return { type: 'audio', label: 'לחץ להאזנה להקלטה' };
+  }
+
+  if (mimeType.startsWith('text/html') || mimeType.startsWith('application/pdf')) {
+    return { type: 'document', label: 'לחץ לצפייה במסמך' };
+  }
+
+  return { type: 'link', label: 'לחץ לצפייה בראיה' };
 };
 
-const EvidenceFrame = ({ src, title, frameHeight }) => {
-  const [height, setHeight] = useState(frameHeight);
-  const iframeRef = useRef(null);
-
-  useEffect(() => {
-    const handleMessage = (event) => {
-      if (
-        event.data?.source === 'evidence-frame'
-        && iframeRef.current
-        && event.source === iframeRef.current.contentWindow
-      ) {
-        setHeight(Math.max(120, Math.ceil(event.data.height)));
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
-
-  return (
-    <iframe
-      ref={iframeRef}
-      className="evidence-card__frame"
-      src={src}
-      title={title}
-      sandbox="allow-scripts allow-same-origin"
-      style={{ height }}
-      loading="lazy"
-    />
-  );
-};
-
-const renderEvidenceAsset = (item = {}) => {
+const renderEvidenceCardPreview = (item = {}, onOpen) => {
   const assetUrl = resolveEvidenceAssetUrl(item);
 
   if (!assetUrl) {
     return null;
   }
 
-  if ((item.mimeType || '').startsWith('image/')) {
-    return <img className="evidence-card__media" src={assetUrl} alt={item.description || 'ראיית זירה'} loading="lazy" />;
-  }
-
-  if ((item.mimeType || '').startsWith('audio/')) {
-    return <audio className="evidence-card__audio" controls preload="none" src={assetUrl} />;
-  }
-
-  if ((item.mimeType || '').startsWith('text/html') || (item.mimeType || '').startsWith('application/pdf')) {
-    const frameHeight = EVIDENCE_FRAME_HEIGHT[item.type] || 400;
-    return (
-      <>
-        <EvidenceFrame src={assetUrl} title={item.description || 'ראיה'} frameHeight={frameHeight} />
-        {(item.mimeType || '').startsWith('application/pdf') && (
-          <a className="evidence-card__link" href={assetUrl} target="_blank" rel="noreferrer">
-            הורד/פתח כקובץ PDF
-          </a>
-        )}
-      </>
-    );
-  }
+  const { type, label } = getEvidencePreviewMeta(item);
 
   return (
-    <a className="evidence-card__link" href={assetUrl} target="_blank" rel="noreferrer">
-      פתח קובץ ראיה
-    </a>
+    <button
+      type="button"
+      className="evidence-card__media-locked"
+      onClick={() => onOpen?.({ type, src: assetUrl, alt: item.description, mimeType: item.mimeType })}
+    >
+      <span className="evidence-card__media-locked-icon"><IconSearch size={18} /></span>
+      <span>{label}</span>
+    </button>
   );
 };
 
@@ -225,6 +227,7 @@ export default function GamePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const [mobileView, setMobileView] = useState('chat');
   const [selectedSuspectName, setSelectedSuspectName] = useState('');
   const [messages, setMessages] = useState([]);
   const [question, setQuestion] = useState('');
@@ -244,6 +247,7 @@ export default function GamePage() {
   const [investigatorNotes, setInvestigatorNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesStatus, setNotesStatus] = useState('');
+  const [evidenceViewer, setEvidenceViewer] = useState(null);
 
   const messagesContainerRef = useRef(null);
   const shouldStickToBottomRef = useRef(true);
@@ -357,6 +361,7 @@ export default function GamePage() {
     setSelectedSuspectName(suspect.name);
     loadSuspectHistory(caseDoc, suspect.name);
     setQuestion('');
+    setMobileView('chat');
   };
 
   const handleMessagesScroll = () => {
@@ -462,7 +467,31 @@ export default function GamePage() {
 
   return (
     <div className="game-container">
-      <div className="sidebar">
+      <div className="mobile-tabs">
+        <button
+          type="button"
+          className={`mobile-tab-btn ${mobileView === 'chat' ? 'active' : ''}`}
+          onClick={() => setMobileView('chat')}
+        >
+          שיחת חקירה
+        </button>
+        <button
+          type="button"
+          className={`mobile-tab-btn ${mobileView === 'notebook' ? 'active' : ''}`}
+          onClick={() => setMobileView('notebook')}
+        >
+          ריכוז עדויות
+        </button>
+        <button
+          type="button"
+          className={`mobile-tab-btn ${mobileView === 'case' ? 'active' : ''}`}
+          onClick={() => setMobileView('case')}
+        >
+          תיק, חשודים וראיות
+        </button>
+      </div>
+
+      <div className={`sidebar ${mobileView === 'case' ? 'is-active-mobile' : ''}`}>
         <button className="back-btn" onClick={() => navigate(`/briefing/${caseId}`)}>← חזור לתדרוך</button>
 
         <div className="sidebar-brief">
@@ -481,16 +510,22 @@ export default function GamePage() {
             className={`suspect-card ${selectedSuspectName === suspect.name ? 'active' : ''}`}
             onClick={() => handleSelectSuspect(suspect)}
           >
-            <SuspectPortrait name={suspect.name} size={44}/>
-            <div className="suspect-name-row">
-              <div className="suspect-name">{suspect.name}</div>
-              <span className={`person-badge person-badge--${getInvolvementType(suspect)}`}>
-                {INVOLVEMENT_LABELS[getInvolvementType(suspect)]}
-              </span>
+            <div className="suspect-card__top">
+              <SuspectPortrait name={suspect.name} size={34}/>
+              <div className="suspect-card__id">
+                <div className="suspect-name-row">
+                  <div className="suspect-name">{suspect.name}</div>
+                  <span className={`person-badge person-badge--${getInvolvementType(suspect)}`}>
+                    {INVOLVEMENT_LABELS[getInvolvementType(suspect)]}
+                  </span>
+                </div>
+                <div className="suspect-role">תפקיד: {suspect.role}</div>
+              </div>
             </div>
-            <div className="suspect-role">תפקיד: {suspect.role}</div>
-            <EkgMeter stress={suspect.stressMeter || 0}/>
-            <div className="stress-label">לחץ: {suspect.stressMeter || 0}%</div>
+            <div className="suspect-card__stress">
+              <EkgMeter stress={suspect.stressMeter || 0}/>
+              <span className="stress-label">{suspect.stressMeter || 0}%</span>
+            </div>
           </div>
         ))}
 
@@ -503,80 +538,82 @@ export default function GamePage() {
                 {ARTIFACT_TYPE_LABELS[item.artifactType] && ` · ${ARTIFACT_TYPE_LABELS[item.artifactType]}`}
               </span>
               <p>{item.description}</p>
-              {renderEvidenceAsset(item)}
+              {renderEvidenceCardPreview(item, setEvidenceViewer)}
               {item.assetTranscript && <p className="evidence-card__transcript">תמלול: {item.assetTranscript}</p>}
             </div>
           ))}
         </div>
 
         <div className="action-buttons">
-          <button className="action-btn" onClick={() => setShowConsult(true)}>🎙️ התייעץ עם המפקד</button>
-          <button className="action-btn solve" onClick={() => setShowSolve(true)}>🏁 הגש פתרון</button>
+          <button className="action-btn" onClick={() => setShowConsult(true)}><IconMic size={15} /> התייעץ עם המפקד</button>
+          <button className="action-btn solve" onClick={() => setShowSolve(true)}><IconFlag size={15} /> הגש פתרון</button>
         </div>
       </div>
 
-      <div className="chat-area">
-        {selectedSuspect && (
-          <div className="chat-header">
-            <div className="chat-header__info">
-              <div className="chat-title-row">
-                <span className="chat-name">{selectedSuspect.name}</span>
-                <span className="chat-role">תפקיד: {selectedSuspect.role}</span>
-                <span className={`person-badge person-badge--${getInvolvementType(selectedSuspect)}`}>
-                  {INVOLVEMENT_LABELS[getInvolvementType(selectedSuspect)]}
-                </span>
+      <div className={`chat-area ${mobileView === 'chat' || mobileView === 'notebook' ? 'is-active-mobile' : ''}`}>
+        <div className={`chat-thread ${mobileView === 'notebook' ? 'is-hidden-mobile' : ''}`}>
+          {selectedSuspect && (
+            <div className="chat-header">
+              <div className="chat-header__info">
+                <div className="chat-title-row">
+                  <span className="chat-name">{selectedSuspect.name}</span>
+                  <span className="chat-role">תפקיד: {selectedSuspect.role}</span>
+                  <span className={`person-badge person-badge--${getInvolvementType(selectedSuspect)}`}>
+                    {INVOLVEMENT_LABELS[getInvolvementType(selectedSuspect)]}
+                  </span>
+                </div>
+                <p className="chat-personality">{selectedSuspect.personality}</p>
+                {selectedSuspect.alibi && <p className="chat-alibi">אליבי נטען: {selectedSuspect.alibi}</p>}
               </div>
-              <p className="chat-personality">{selectedSuspect.personality}</p>
-              {selectedSuspect.alibi && <p className="chat-alibi">אליבי נטען: {selectedSuspect.alibi}</p>}
+              <div className="tone-row">
+                {Object.keys(TONE_LABELS).map((item) => (
+                  <button
+                    key={item}
+                    className={`tone-btn ${tone === item ? 'active' : ''}`}
+                    onClick={() => setTone(item)}
+                  >
+                    {TONE_LABELS[item]}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="tone-row">
-              {Object.keys(TONE_LABELS).map((item) => (
-                <button
-                  key={item}
-                  className={`tone-btn ${tone === item ? 'active' : ''}`}
-                  onClick={() => setTone(item)}
-                >
-                  {TONE_LABELS[item]}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div
-          ref={messagesContainerRef}
-          className="messages"
-          onScroll={handleMessagesScroll}
-        >
-          {error && <div className="inline-error">{error}</div>}
-          {messages.length === 0 && (
-            <p className="empty-chat">בחר חשוד ושאל שאלה חכמה כדי להתחיל את החקירה</p>
           )}
-          {messages.map((msg, i) => (
-            <div key={i} className={`message ${msg.role === 'user' ? 'user-message' : 'assistant-message'}`}>
-              {msg.content}
-            </div>
-          ))}
-          {asking && <div className="message assistant-message typing">...</div>}
+
+          <div
+            ref={messagesContainerRef}
+            className="messages"
+            onScroll={handleMessagesScroll}
+          >
+            {error && <div className="inline-error">{error}</div>}
+            {messages.length === 0 && (
+              <p className="empty-chat">בחר חשוד ושאל שאלה חכמה כדי להתחיל את החקירה</p>
+            )}
+            {messages.map((msg, i) => (
+              <div key={i} className={`message ${msg.role === 'user' ? 'user-message' : 'assistant-message'}`}>
+                {msg.content}
+              </div>
+            ))}
+            {asking && <div className="message assistant-message typing">...</div>}
+          </div>
+
+          <div className="input-area">
+            <input
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAsk();
+                }
+              }}
+              placeholder={`שאל את ${selectedSuspect?.name || 'החשוד'}...`}
+              disabled={asking}
+            />
+            <button onClick={handleAsk} disabled={asking || !question.trim()}>שלח</button>
+          </div>
         </div>
 
-        <div className="input-area">
-          <input
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleAsk();
-              }
-            }}
-            placeholder={`שאל את ${selectedSuspect?.name || 'החשוד'}...`}
-            disabled={asking}
-          />
-          <button onClick={handleAsk} disabled={asking || !question.trim()}>שלח</button>
-        </div>
-
-        <section className="notebook-panel">
+        <section className={`notebook-panel ${mobileView === 'notebook' ? 'is-active-mobile' : ''}`}>
           <div className="notebook-panel__head">
             <div>
               <span className="side-label">מחברת חקירה</span>
@@ -693,7 +730,7 @@ export default function GamePage() {
       {showConsult && (
         <div className="overlay" onClick={() => { setShowConsult(false); setCommanderResponse(''); setSuspicion(''); }}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>🎙️ התייעצות עם המפקד</h2>
+            <h2><IconMic size={18} /> התייעצות עם המפקד</h2>
             <p className="modal-subtitle">שתף את המפקד בחשד שלך — הוא יכוון, לא יגלה</p>
             <textarea
               value={suspicion}
@@ -720,7 +757,7 @@ export default function GamePage() {
       {showSolve && !result && (
         <div className="overlay" onClick={() => setShowSolve(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>🏁 הגשת פתרון</h2>
+            <h2><IconFlag size={18} /> הגשת פתרון</h2>
             <p className="modal-subtitle">מי לדעתך ביצע את הפשע?</p>
             <select value={accusedName} onChange={(e) => setAccusedName(e.target.value)}>
               <option value="">בחר חשוד</option>
@@ -747,9 +784,44 @@ export default function GamePage() {
       {result && (
         <div className="overlay">
           <div className={`modal result-modal ${result.isCorrect ? 'success' : 'failure'}`}>
-            <h2>{result.isCorrect ? '✅ פתרת את התעלומה!' : '❌ טעית'}</h2>
+            <h2>{result.isCorrect ? <><IconCheck size={22} /> פתרת את התעלומה!</> : <><IconX size={22} /> טעית</>}</h2>
             <p>{result.isCorrect ? 'עבודה מרשימה, סוכן.' : `האשם האמיתי היה: ${result.correctCulprit}`}</p>
             <button className="confirm-btn" onClick={() => navigate('/dashboard')}>חזור לדשבורד</button>
+          </div>
+        </div>
+      )}
+
+      {evidenceViewer && (
+        <div className="overlay overlay--evidence" onClick={() => setEvidenceViewer(null)}>
+          <div className="image-lightbox" onClick={(e) => e.stopPropagation()}>
+            {evidenceViewer.type === 'image' && (
+              <img className="image-lightbox__img" src={evidenceViewer.src} alt={evidenceViewer.alt || 'ראיית זירה'} />
+            )}
+
+            {evidenceViewer.type === 'audio' && (
+              <audio className="image-lightbox__audio" controls autoPlay preload="metadata" src={evidenceViewer.src} />
+            )}
+
+            {evidenceViewer.type === 'document' && (
+              <iframe
+                className="image-lightbox__frame"
+                src={evidenceViewer.src}
+                title={evidenceViewer.alt || 'קובץ ראיה'}
+                sandbox="allow-scripts allow-same-origin"
+              />
+            )}
+
+            {evidenceViewer.type === 'link' && (
+              <p className="image-lightbox__fallback-text">{evidenceViewer.alt}</p>
+            )}
+
+            {(evidenceViewer.type === 'link' || evidenceViewer.mimeType === 'application/pdf') && (
+              <a className="evidence-card__link" href={evidenceViewer.src} target="_blank" rel="noreferrer">
+                {evidenceViewer.mimeType === 'application/pdf' ? 'הורד/פתח כקובץ PDF' : 'פתח קובץ ראיה'}
+              </a>
+            )}
+
+            <button className="image-lightbox__close" onClick={() => setEvidenceViewer(null)}>✕ סגור</button>
           </div>
         </div>
       )}
