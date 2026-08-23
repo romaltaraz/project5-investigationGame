@@ -1,15 +1,19 @@
 ﻿import fs from 'fs/promises';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import OpenAI from 'openai';
 import { buildValidNameSet, DEFAULT_ARTIFACT_TYPE } from './evidenceBlueprint.js';
 import { generateStructuredMessage } from './whatsappEvidence.js';
 import { generateStructuredDocument } from './documentEvidence.js';
+import { buildImagePrompt, generateFluxImage } from './fluxImage.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const BACKEND_ROOT = path.resolve(__dirname, '..');
-const GENERATED_EVIDENCE_ROOT = path.join(BACKEND_ROOT, 'generated-evidence');
+// Must match the same fixed anchor index.js uses for its static mount (see
+// GENERATED_EVIDENCE_DIR there): process.cwd(), not __dirname. __dirname
+// here resolves to backend/services when running from source but to
+// backend/dist/services when running the compiled output (the nodemon dev
+// pipeline), which would silently write files the static server can never
+// find. npm always launches this app with backend/ as the working directory
+// either way, so process.cwd() is the one path that's stable across both.
+const GENERATED_EVIDENCE_ROOT = path.join(process.cwd(), 'generated-evidence');
 
 const escapeHtml = (value = '') => `${value}`
   .replace(/&/g, '&amp;')
@@ -74,75 +78,8 @@ const generateAiText = async (systemPrompt, userPrompt) => {
 };
 
 // ── Renderers ────────────────────────────────────────────────────────────────
-
-const renderPhotoSvg = ({ briefingDetails, evidence, index, aiLines }) => {
-  const scene = briefingDetails.incidentLocation || 'זירת האירוע';
-  const time = briefingDetails.incidentTime || '';
-  const lines = (aiLines || [evidence.description || '', evidence.hiddenClue || '']).filter(Boolean);
-
-  const lineElements = lines.map((line, i) => (
-    `<text x="64" y="${390 + i * 36}" fill="#e8dfd0" font-size="15"
-      font-family="'Segoe UI',Arial,sans-serif" text-anchor="end"
-      transform="scale(-1,1) translate(-1216,0)">${escapeHtml(line.slice(0, 90))}</text>`
-  )).join('\n  ');
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1216" height="720" viewBox="0 0 1216 720">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0a0e12"/>
-      <stop offset="100%" stop-color="#1c1508"/>
-    </linearGradient>
-    <filter id="grain">
-      <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/>
-      <feColorMatrix type="saturate" values="0"/>
-      <feBlend in="SourceGraphic" mode="multiply" result="blend"/>
-      <feComposite in="blend" in2="SourceGraphic" operator="in"/>
-    </filter>
-  </defs>
-  <rect width="1216" height="720" fill="url(#bg)"/>
-  <rect width="1216" height="720" fill="url(#bg)" filter="url(#grain)" opacity="0.18"/>
-
-  <!-- top bar -->
-  <rect x="0" y="0" width="1216" height="52" fill="#0f1318" opacity="0.9"/>
-  <rect x="0" y="52" width="1216" height="2" fill="#8a6238" opacity="0.7"/>
-  <text x="24" y="34" fill="#d7aa66" font-size="11" font-family="monospace" letter-spacing="3">FORENSIC EVIDENCE  •  PHOTO ${String(index + 1).padStart(2,'0')}  •  CLASSIFIED</text>
-  <text x="1192" y="34" fill="#8a6238" font-size="11" font-family="monospace" text-anchor="end">${escapeHtml(time)}</text>
-
-  <!-- main frame -->
-  <rect x="40" y="76" width="760" height="570" rx="4" fill="#111820" stroke="#4a3520" stroke-width="1.5"/>
-  <!-- inner scan lines -->
-  <rect x="40" y="76" width="760" height="570" rx="4" fill="none" stroke="#d7aa66" stroke-width="0.5" opacity="0.15"/>
-
-  <!-- evidence marker crosses -->
-  <line x1="420" y1="260" x2="420" y2="300" stroke="#ff4444" stroke-width="1.5"/>
-  <line x1="400" y1="280" x2="440" y2="280" stroke="#ff4444" stroke-width="1.5"/>
-  <circle cx="420" cy="280" r="18" fill="none" stroke="#ff4444" stroke-width="1.2" opacity="0.7"/>
-
-  <line x1="240" y1="420" x2="240" y2="460" stroke="#ffaa00" stroke-width="1.5"/>
-  <line x1="220" y1="440" x2="260" y2="440" stroke="#ffaa00" stroke-width="1.5"/>
-  <circle cx="240" cy="440" r="14" fill="none" stroke="#ffaa00" stroke-width="1.2" opacity="0.6"/>
-
-  <!-- scene label -->
-  <text x="56" y="108" fill="#d7aa66" font-size="13" font-family="monospace" letter-spacing="1" opacity="0.9">${escapeHtml(scene)}</text>
-
-  <!-- AI-generated observation lines -->
-  ${lineElements}
-
-  <!-- bottom bar inside frame -->
-  <rect x="40" y="614" width="760" height="32" fill="#0a0e12" opacity="0.85"/>
-  <text x="56" y="634" fill="#6a7a8a" font-size="10" font-family="monospace">IMG-${String(index + 1).padStart(4,'0')} • AUTO-ENHANCED • DO NOT DISTRIBUTE</text>
-
-  <!-- right panel -->
-  <rect x="820" y="76" width="356" height="570" rx="4" fill="#0d1117" stroke="#2a2218" stroke-width="1"/>
-  <rect x="836" y="96" width="324" height="2" fill="#8a6238" opacity="0.5"/>
-  <text x="998" y="88" fill="#8a6238" font-size="10" font-family="monospace" text-anchor="middle" letter-spacing="2">FIELD NOTES</text>
-  <text x="998" y="140" fill="#c0a070" font-size="12" font-family="'Segoe UI',Arial,sans-serif" text-anchor="middle">${escapeHtml((evidence.description || '').slice(0,45))}</text>
-  <rect x="836" y="155" width="324" height="1" fill="#3a2e1e" opacity="0.8"/>
-  <text x="998" y="190" fill="#6a7a6a" font-size="10" font-family="monospace" text-anchor="middle" letter-spacing="1">HIDDEN DETAIL</text>
-  <text x="998" y="216" fill="#a09060" font-size="11" font-family="'Segoe UI',Arial,sans-serif" text-anchor="middle">${escapeHtml((evidence.hiddenClue || '').slice(0,48))}</text>
-</svg>`;
-};
+// Photo evidence no longer has a local renderer here — real images now come
+// from NVIDIA FLUX via services/fluxImage.js (buildImagePrompt + generateFluxImage).
 
 const renderRecordingHtml = ({ caseName, evidence, transcript, suspects }) => {
   const lines = transcript.split('\n').filter(Boolean);
@@ -354,16 +291,6 @@ const renderDocumentHtml = ({ caseName, briefingDetails, evidence, caseId, aiCon
 
 // ── AI prompt builders ───────────────────────────────────────────────────────
 
-const buildPhotoPrompt = ({ briefingDetails, evidence }) => ({
-  system: 'אתה חוקר פלילי שכותב תצפיות מקצועיות על תמונות זירת פשע. כתוב בעברית קצרה ועניינית.',
-  user: `כתוב 4 תצפיות קצרות ומדויקות (כל אחת בשורה נפרדת) שניתן לראות בצילום זירת פשע.
-מיקום: ${briefingDetails.incidentLocation || 'זירה לא ידועה'}.
-שעה: ${briefingDetails.incidentTime || 'לא ידוע'}.
-ראיה: ${evidence.description || ''}.
-רמז נסתר: ${evidence.hiddenClue || ''}.
-רשום רק 4 שורות, ללא מספור, כל אחת תיאור תצפית קצר.`,
-});
-
 const buildRecordingPrompt = ({ evidence, suspects, briefingDetails }) => {
   const nameA = suspects[0]?.name || 'קול א';
   const nameB = suspects[1]?.name || 'קול ב';
@@ -429,12 +356,14 @@ const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, sus
   const fileBase = `${String(index + 1).padStart(2, '0')}-${sanitizeFileSegment(evidence.type)}-${sanitizeFileSegment(caseName)}`;
 
   if (evidence.type === 'photo') {
-    const { system, user } = buildPhotoPrompt({ briefingDetails, evidence });
-    const aiText = await generateAiText(system, user);
-    const aiLines = aiText.split('\n').filter(Boolean).slice(0, 5);
-    const filename = `${fileBase}.svg`;
-    await fs.writeFile(path.join(caseDir, filename), renderPhotoSvg({ briefingDetails, evidence, index, aiLines }), 'utf8');
-    return buildAssetEnvelope(evidence, filename, 'image/svg+xml', 'photo', { caseId });
+    const prompt = buildImagePrompt(evidence, suspects, { caseName, briefingDetails });
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`🖼️  FLUX prompt [${evidence.type} #${index + 1}]:`, prompt);
+    }
+    const { buffer, mimeType, extension } = await generateFluxImage(prompt);
+    const filename = `${fileBase}.${extension}`;
+    await fs.writeFile(path.join(caseDir, filename), buffer);
+    return buildAssetEnvelope(evidence, filename, mimeType, 'photo', { caseId });
   }
 
   if (evidence.type === 'recording') {

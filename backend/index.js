@@ -8,7 +8,6 @@ import rateLimit from 'express-rate-limit';
 import path from 'path';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { fileURLToPath } from 'url';
 
 import User from './models/User.js';
 import caseRoutes from './routes/cases.js';
@@ -19,8 +18,22 @@ import { sendPasswordResetCode } from './utils/mailer.js';
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+
+// Generated evidence files must live at a stable path regardless of whether
+// this process runs from source (`node index.js`) or from the compiled
+// output (`node dist/index.js`, used by the nodemon dev pipeline) - __dirname
+// differs between those two, but npm always launches this script with the
+// backend/ package directory as the working directory, so process.cwd() is
+// the one anchor that's consistent either way.
+const GENERATED_EVIDENCE_DIR = path.join(process.cwd(), 'generated-evidence');
+
+// Mounted before helmet() so these static responses never receive its CSP
+// header - the served HTML evidence files (WhatsApp/document/recording
+// renderers) contain a small inline <script> for iframe auto-resizing, which
+// a 'self'-only script-src would silently block. They're always embedded in
+// a sandboxed iframe (see GamePage.jsx), so that sandbox - not this header -
+// is the real security boundary for this route.
+app.use('/generated-evidence', express.static(GENERATED_EVIDENCE_DIR));
 
 // Middleware
 app.use(helmet({
@@ -38,7 +51,6 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' })); //לא צריך bodyParser כי כבר כולל פונקציונליות דומה עם express.json()
-app.use('/generated-evidence', express.static(path.join(__dirname, 'generated-evidence')));
 
 // Rate Limiting
 const generalLimiter = rateLimit({ //מגביל את כל השרת ל-100 בקשות כל 15 דקות.
