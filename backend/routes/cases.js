@@ -14,6 +14,7 @@ import {
   buildBriefingDetailsPrompt,
   buildSuspectsDetailPrompt,
   buildEvidencePrompt,
+  applySuspectAlibiHebrewQa,
 } from '../caseFactory.js';
 import { generateEvidenceAssets } from '../services/evidenceAssets.js';
 import {
@@ -171,12 +172,22 @@ const ensureCaseEvidenceAssets = async (caseDoc) => {
   _evidenceGenerationInProgress.add(caseId);
 
   try {
+    // caseDoc here comes from a client-facing query that deliberately excludes
+    // solution/suspects.appearanceProfile/suspects.voiceProfile (see the
+    // .select() calls below) - but the generators need all of that (FLUX
+    // needs appearanceProfile for character consistency, the recording
+    // generator needs voiceProfile + solution). Re-fetch the full document
+    // for generation purposes only; nothing from it is sent to the client.
+    const fullCaseDoc = await Case.findById(caseId).lean();
+
     const generatedEvidence = await generateEvidenceAssets({
       caseId,
-      caseName: caseDoc.caseName,
-      briefingDetails: caseDoc.briefingDetails || {},
-      suspects: (caseDoc.suspects || []).map((suspect) => suspect.toObject?.() || suspect),
-      evidence: (caseDoc.evidence || []).map((item) => item.toObject?.() || item),
+      caseName: fullCaseDoc.caseName,
+      briefingDetails: fullCaseDoc.briefingDetails || {},
+      suspects: fullCaseDoc.suspects || [],
+      evidence: fullCaseDoc.evidence || [],
+      difficulty: fullCaseDoc.difficulty,
+      solution: fullCaseDoc.solution,
     });
 
     const mappedEvidence = generatedEvidence.map((item) => mapEvidenceForStorage(item));
@@ -318,6 +329,7 @@ const mapEvidenceForStorage = (evidence = {}) => ({
   artifactType: evidence.artifactType || '',
   messageData: evidence.messageData || undefined,
   documentData: evidence.documentData || undefined,
+  recordingData: evidence.recordingData || undefined,
 });
 
 const normalizeCaseData = (caseData, difficulty, commanderPersonality, fallback = buildFallbackCaseData(difficulty, commanderPersonality)) => {
@@ -480,6 +492,22 @@ router.post('/generate', authenticateToken, async (req, res) => {
       }
     };
 
+    // Same generateAiText shape the structured evidence generators already
+    // use (see evidenceAssets.js) - lets applySuspectAlibiHebrewQa reuse the
+    // exact same runHebrewQa pass without a separate AI integration.
+    const generateAiText = async (systemPrompt, userPrompt) => {
+      const aiResponse = await openai.chat.completions.create({
+        model: 'meta/llama-3.3-70b-instruct',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        max_tokens: 1100,
+        temperature: 0.85,
+      });
+      return aiResponse.choices[0].message.content.trim();
+    };
+
     // עד 4 קריאות AI במקביל, כל אחת מייצרת חלק אחר וקטן יותר של התיק על בסיס אותו שלד -
     // מקצר משמעותית את זמן ההמתנה הכולל לעומת קריאה אחת גדולה שמייצרת הכול ברצף.
     const [commanderResult, briefingResult, suspectsResult, evidenceResult] = await Promise.all([
@@ -515,6 +543,19 @@ router.post('/generate', authenticateToken, async (req, res) => {
     };
 
     const normalizedCase = normalizeCaseData(caseData, difficulty, commanderPersonality, fallback);
+
+    // Correction-only Hebrew QA over each suspect's alibi text specifically
+    // (not a general narrative rewrite - see applySuspectAlibiHebrewQa).
+    // Best-effort: runHebrewQa already falls back to the original alibi on
+    // any failure, but the whole step is wrapped too so a Promise.all
+    // rejection here can never block case creation.
+    try {
+      normalizedCase.suspects = await applySuspectAlibiHebrewQa({
+        generateAiText, suspects: normalizedCase.suspects,
+      });
+    } catch (alibiQaError) {
+      console.error('⚠️ Suspect alibi Hebrew QA failed, keeping original alibi text:', alibiQaError.message);
+    }
 
     // מעדכנים את אותו מסמך שהוזמן מראש (לא יוצרים תיק שני!) ומעבירים אותו לסטטוס 'active'.
     // reservedCase._id כבר נמצא ב-User.activeCases מההזמנה האטומית למעלה, אז אין צורך
@@ -604,6 +645,8 @@ router.post('/generate', authenticateToken, async (req, res) => {
       briefingDetails: newCase.briefingDetails || {},
       suspects: (newCase.suspects || []).map((suspect) => suspect.toObject?.() || suspect),
       evidence: (newCase.evidence || []).map((item) => item.toObject?.() || item),
+      difficulty: newCase.difficulty,
+      solution: newCase.solution,
     }).then(async (generatedEvidence) => {
       await Case.findByIdAndUpdate(newCase._id, {
         evidence: generatedEvidence.map((item) => mapEvidenceForStorage(item))
@@ -642,7 +685,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const cases = await Case.find({ userId: req.user.userId })
-      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -suspects.appearanceProfile -suspects.voiceProfile -evidence.hiddenClue -evidence.purpose -evidence.primaryClue -evidence.secondaryClue -evidence.visualDetails -evidence.voiceProfiles -evidence.messageData -evidence.documentData')
+      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -suspects.appearanceProfile -suspects.voiceProfile -evidence.hiddenClue -evidence.purpose -evidence.primaryClue -evidence.secondaryClue -evidence.visualDetails -evidence.voiceProfiles -evidence.messageData -evidence.documentData -evidence.recordingData')
       .sort({ createdAt: -1 });
 
     res.json({ cases: cases.map((caseDoc) => serializeCaseForClient(caseDoc)) });
@@ -664,7 +707,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       _id: req.params.id,
       userId: req.user.userId
     })
-      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -suspects.appearanceProfile -suspects.voiceProfile -evidence.hiddenClue -evidence.purpose -evidence.primaryClue -evidence.secondaryClue -evidence.visualDetails -evidence.voiceProfiles -evidence.messageData -evidence.documentData')
+      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -suspects.appearanceProfile -suspects.voiceProfile -evidence.hiddenClue -evidence.purpose -evidence.primaryClue -evidence.secondaryClue -evidence.visualDetails -evidence.voiceProfiles -evidence.messageData -evidence.documentData -evidence.recordingData')
       .lean();
 
     if (!caseDoc) return res.status(404).json({ message: 'תיק לא נמצא' });

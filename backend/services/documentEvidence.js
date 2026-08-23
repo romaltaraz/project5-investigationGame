@@ -13,6 +13,9 @@ import {
   parseAiJson,
   isHandwrittenArtifact,
   resolveWritingProfile,
+  resolveGender,
+  HEBREW_REGISTER,
+  runHebrewQa,
 } from './evidenceBlueprint.js';
 import { renderHandwrittenArtifact } from './handwritingRenderer.js';
 import { renderFormalDocumentHtml } from './documentRenderer.js';
@@ -23,9 +26,11 @@ const buildDocumentDataPrompt = ({ caseName, briefingDetails, evidence, artifact
   const writerInstruction = isHandwritten
     ? `שדה "writer" חובה, וחייב להיות בדיוק אחד מהשמות הבאים, בלי לשנות אות אחת: ${nameList}.`
     : `שדה "writer" אופציונלי. אם המסמך נכתב/נחתם ע"י אחת הדמויות, חובה שיהיה שם מדויק מתוך: ${nameList}. אם זהו מסמך שנוצר ע"י מערכת (כמו רישום גישה אוטומטי), השאר "writer" ריק.`;
+  const registerBlock = isHandwritten ? HEBREW_REGISTER.personalDocument : HEBREW_REGISTER.officialDocument;
 
   return {
-    system: 'אתה כותב תוכן מובנה (JSON בלבד) עבור ראיית מסמך במשחק חקירה בעברית. אסור בהחלט להמציא שם של דמות שלא נמסרה לך.',
+    system: `אתה כותב תוכן מובנה (JSON בלבד) עבור ראיית מסמך במשחק חקירה בעברית. אסור בהחלט להמציא שם של דמות שלא נמסרה לך.
+${registerBlock}`,
     user: `תיק: "${caseName}". מיקום: ${briefingDetails.incidentLocation || ''}. שעה: ${briefingDetails.incidentTime || ''}.
 סוג הארטיפקט הפיזי: ${artifactType}.
 תיאור הראיה: ${evidence.description || ''}.
@@ -91,6 +96,43 @@ const generateDocumentData = async ({ generateAiText, caseName, briefingDetails,
   return null;
 };
 
+// Runs the Hebrew QA pass over bodyText only (title/signatureText/meta
+// fields are short labels, not prose, and are left untouched). When the
+// document has a resolved writer, that suspect's gender is passed in so
+// first-person self-reference gets corrected consistently. Any
+// "corrections" (crossed-out words the renderer highlights by literal
+// substring match - see documentRenderer.js's applyCorrections) are
+// pinned verbatim so a QA rewording can never silently break the
+// strikethrough rendering.
+const applyDocumentHebrewQa = async ({ generateAiText, documentData, artifactType, suspects }) => {
+  const bodyText = `${documentData.bodyText || ''}`.trim();
+  if (!bodyText) return documentData;
+
+  const registerBlock = isHandwrittenArtifact(artifactType)
+    ? HEBREW_REGISTER.personalDocument
+    : HEBREW_REGISTER.officialDocument;
+
+  const writerSuspect = documentData.writer
+    ? (suspects || []).find((suspect) => `${suspect?.name || ''}`.trim() === `${documentData.writer}`.trim())
+    : null;
+  const speakerGenders = writerSuspect ? { [writerSuspect.name]: resolveGender(writerSuspect) } : {};
+
+  const corrections = Array.isArray(documentData.corrections) ? documentData.corrections.filter(Boolean) : [];
+  const extraInstruction = corrections.length
+    ? `שמור בדיוק, מילה במילה, על המחרוזות הבאות בתוך הטקסט המתוקן, גם אם הן נראות לא תקינות דקדוקית: ${corrections.join(', ')}.\n`
+    : '';
+
+  const [corrected] = await runHebrewQa({
+    generateAiText,
+    items: [{ text: bodyText }],
+    registerBlock,
+    speakerGenders,
+    extraInstruction,
+  });
+
+  return { ...documentData, bodyText: corrected?.text ?? documentData.bodyText };
+};
+
 // Renders documentData into the actual artifact. Dispatch by artifactType
 // only — swapping the handwritten branch for a FLUX image call later
 // means changing this one branch, not the schema or the AI step.
@@ -114,9 +156,13 @@ export const generateStructuredDocument = async ({
     return null; // signal caller: fall back to legacy generic renderer
   }
 
-  const rendered = dispatchRenderer({
-    artifactType, documentData, suspects, evidence, caseName, briefingDetails, caseId,
+  const correctedDocumentData = await applyDocumentHebrewQa({
+    generateAiText, documentData, artifactType, suspects,
   });
 
-  return { documentData, rendered };
+  const rendered = dispatchRenderer({
+    artifactType, documentData: correctedDocumentData, suspects, evidence, caseName, briefingDetails, caseId,
+  });
+
+  return { documentData: correctedDocumentData, rendered };
 };

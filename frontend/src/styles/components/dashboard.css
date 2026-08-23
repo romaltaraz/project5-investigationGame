@@ -6,10 +6,7 @@
   display: flex;
   flex-direction: column;
   padding: 12px 8px 0;
-  background:
-    radial-gradient(circle at top left, rgba(196, 107, 58, 0.18), transparent 30%),
-    radial-gradient(circle at bottom right, rgba(143, 45, 35, 0.18), transparent 26%),
-    linear-gradient(180deg, #090909, #110f0d 45%, #0d0b0a 100%);
+  background: var(--bg-primary);
   position: relative;
   overflow-x: hidden;
 }

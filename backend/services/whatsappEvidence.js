@@ -7,7 +7,9 @@
 // corrective retry, then signals the caller to fall back to the
 // pre-existing generic renderer.
 
-import { namesAreValid, parseAiJson } from './evidenceBlueprint.js';
+import {
+  namesAreValid, parseAiJson, resolveGender, HEBREW_REGISTER, buildGenderDialogueNote, runHebrewQa,
+} from './evidenceBlueprint.js';
 
 const escapeHtml = (value = '') => `${value}`
   .replace(/&/g, '&amp;')
@@ -18,9 +20,12 @@ const escapeHtml = (value = '') => `${value}`
 
 const buildMessageDataPrompt = ({ evidence, participantA, participantB, briefingDetails, validNames }) => {
   const nameList = [...validNames].join(', ');
+  const genderNote = buildGenderDialogueNote(participantA, participantB);
   return {
-    system: 'אתה כותב תוכן מובנה (JSON בלבד) עבור שיחת ווטסאפ פיקטיבית במשחק חקירה בעברית. אסור בהחלט להמציא שם של דמות שלא נמסרה לך.',
+    system: `אתה כותב תוכן מובנה (JSON בלבד) עבור שיחת ווטסאפ פיקטיבית במשחק חקירה בעברית. אסור בהחלט להמציא שם של דמות שלא נמסרה לך.
+${HEBREW_REGISTER.whatsapp}`,
     user: `שיחה בין ${participantA.name} (${participantA.role}) לבין ${participantB.name} (${participantB.role}).
+${genderNote}
 מיקום/שעת האירוע בתיק: ${briefingDetails.incidentLocation || ''} ${briefingDetails.incidentTime || ''}.
 נושא הראיה: ${evidence.description || ''}.
 מטרת הראיה: ${evidence.purpose || ''}.
@@ -73,6 +78,41 @@ const generateMessageData = async ({ generateAiText, evidence, participantA, par
   }
 
   return null;
+};
+
+// Runs the Hebrew QA pass over the non-deleted, non-empty message texts
+// only (a deleted message's text is intentionally blank - see
+// validateMessageData - so there's nothing for the QA pass to look at)
+// and splices corrected text back into the original message array by
+// index, leaving sender/timestamp/status/deleted untouched.
+const applyWhatsappHebrewQa = async ({ generateAiText, messages, participantA, participantB }) => {
+  const qaIndices = [];
+  const items = [];
+
+  messages.forEach((message, index) => {
+    if (!message.deleted && `${message.text || ''}`.trim()) {
+      qaIndices.push(index);
+      items.push({ speaker: message.sender, text: message.text });
+    }
+  });
+
+  if (items.length === 0) return messages;
+
+  const corrected = await runHebrewQa({
+    generateAiText,
+    items,
+    registerBlock: HEBREW_REGISTER.whatsapp,
+    speakerGenders: {
+      [participantA.name]: resolveGender(participantA),
+      [participantB.name]: resolveGender(participantB),
+    },
+  });
+
+  const result = [...messages];
+  corrected.forEach((item, i) => {
+    result[qaIndices[i]] = { ...result[qaIndices[i]], text: item.text };
+  });
+  return result;
 };
 
 const STATUS_TICKS = {
@@ -184,10 +224,15 @@ export const generateStructuredMessage = async ({
     return null;
   }
 
+  const correctedMessages = await applyWhatsappHebrewQa({
+    generateAiText, messages: messageData.messages, participantA, participantB,
+  });
+  const finalMessageData = { ...messageData, messages: correctedMessages };
+
   return {
-    messageData,
+    messageData: finalMessageData,
     rendered: {
-      content: renderWhatsappHtml({ caseName, messageData }),
+      content: renderWhatsappHtml({ caseName, messageData: finalMessageData }),
       mimeType: 'text/html; charset=utf-8',
       extension: 'html',
     },

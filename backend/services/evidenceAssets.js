@@ -4,6 +4,8 @@ import OpenAI from 'openai';
 import { buildValidNameSet, DEFAULT_ARTIFACT_TYPE } from './evidenceBlueprint.js';
 import { generateStructuredMessage } from './whatsappEvidence.js';
 import { generateStructuredDocument } from './documentEvidence.js';
+import { generateStructuredRecording } from './recordingEvidence.js';
+import { renderRecordingWithAudio } from './recordingRenderer.js';
 import { buildImagePrompt, generateFluxImage } from './fluxImage.js';
 
 // Must match the same fixed anchor index.js uses for its static mount (see
@@ -349,7 +351,7 @@ const buildDocumentPrompt = ({ caseName, briefingDetails, evidence, caseId }) =>
 
 
 
-const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, suspects, evidence, index }) => {
+const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, suspects, evidence, index, difficulty, solution }) => {
   const caseDir = path.join(GENERATED_EVIDENCE_ROOT, `${caseId}`);
   await ensureDirectory(caseDir);
 
@@ -367,6 +369,38 @@ const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, sus
   }
 
   if (evidence.type === 'recording') {
+    const validNameSet = buildValidNameSet(suspects);
+    const structured = await generateStructuredRecording({
+      generateAiText, evidence, suspects, briefingDetails, difficulty, solution, validNameSet,
+    }).catch((err) => {
+      console.error(`⚠️ Structured recording (ElevenLabs TTS) failed for evidence #${index + 1}, falling back to transcript-only:`, err.message);
+      return null;
+    });
+
+    if (structured) {
+      const audioFilename = `${fileBase}.${structured.audio.extension}`;
+      const htmlFilename = `${fileBase}.html`;
+      await fs.writeFile(path.join(caseDir, audioFilename), structured.audio.buffer);
+      await fs.writeFile(
+        path.join(caseDir, htmlFilename),
+        renderRecordingWithAudio({
+          caseName,
+          evidence,
+          turns: structured.recordingData.turns,
+          audioFilename,
+          durationSeconds: structured.audio.durationSeconds,
+        }),
+        'utf8',
+      );
+      return buildAssetEnvelope(evidence, htmlFilename, 'text/html; charset=utf-8', 'recording', {
+        caseId,
+        assetTranscript: structured.transcript,
+        recordingData: structured.recordingData,
+      });
+    }
+
+    // Fallback: pre-existing generic transcript-only renderer (no real audio yet,
+    // but the player never loses the textual evidence just because TTS failed).
     const { system, user } = buildRecordingPrompt({ evidence, suspects, briefingDetails });
     const transcript = await generateAiText(system, user);
     const filename = `${fileBase}.html`;
@@ -428,7 +462,7 @@ const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, sus
   };
 };
 
-export const generateEvidenceAssets = async ({ caseId, caseName, briefingDetails = {}, suspects = [], evidence = [] }) => {
+export const generateEvidenceAssets = async ({ caseId, caseName, briefingDetails = {}, suspects = [], evidence = [], difficulty, solution }) => {
   await ensureDirectory(GENERATED_EVIDENCE_ROOT);
 
   const generatedEvidence = [];
@@ -442,6 +476,8 @@ export const generateEvidenceAssets = async ({ caseId, caseName, briefingDetails
         suspects,
         evidence: evidence[index],
         index,
+        difficulty,
+        solution,
       });
       generatedEvidence.push(generated);
     } catch (error) {

@@ -12,6 +12,7 @@ body,
   margin: 0;
   padding: 0;
   overflow: hidden;
+  background-color: var(--bg-primary);
 }
 
 html {
@@ -48,9 +49,7 @@ select {
   display: grid;
   place-items: center;
   padding: 24px;
-  background:
-    radial-gradient(circle at top, rgba(196, 107, 58, 0.18), transparent 35%),
-    linear-gradient(145deg, #0a0a0a, #16120f 55%, #110f0d);
+  background: var(--bg-primary);
 }
 
 .screen-loader__panel {

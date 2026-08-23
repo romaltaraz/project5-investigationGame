@@ -4,6 +4,7 @@ import Case from '../models/Case.js';
 import User from '../models/User.js';
 import { authenticateToken } from '../middleware/auth.js';
 import OpenAI from 'openai';
+import { resolveGender } from '../services/evidenceBlueprint.js';
 
 const router = express.Router();
 const openai = new OpenAI({
@@ -147,10 +148,14 @@ const buildSuspectSystemPrompt = ({ suspect, caseDoc, tone, stressDelta }) => {
   const incidentLocation = caseDoc.briefingDetails?.incidentLocation || 'הזירה המרכזית';
   const incidentTime = caseDoc.briefingDetails?.incidentTime || 'חלון הזמן הקריטי';
   const involvementType = deriveInvolvementType(suspect);
-  const investigationStatusLabel = involvementType === 'witness' ? 'נחקר כעד ראייה' : 'נחקר כחשוד';
+  const suspectGender = resolveGender(suspect);
+  const investigatedVerb = suspectGender === 'female' ? 'נחקרת' : 'נחקר';
+  const witnessNoun = suspectGender === 'female' ? 'עדת ראייה' : 'עד ראייה';
+  const suspectNoun = suspectGender === 'female' ? 'חשודה' : 'חשוד';
+  const investigationStatusLabel = involvementType === 'witness' ? `${investigatedVerb} כ${witnessNoun}` : `${investigatedVerb} כ${suspectNoun}`;
   const investigationStatusInstruction = involvementType === 'witness'
-    ? 'מבחינת החוקרים אתה נחקר כעד ראייה, אבל כל אי-דיוק או הסתרה עלולים לגרום להם לחשוב שאתה יודע הרבה יותר ממה שאתה אומר.'
-    : 'מבחינת החוקרים אתה נחקר כחשוד, ולכן כל תשובה שלך נבחנת גם כסימן למעורבות ישירה באירוע.';
+    ? `מבחינת החוקרים אתה ${investigatedVerb} כ${witnessNoun}, אבל כל אי-דיוק או הסתרה עלולים לגרום להם לחשוב שאתה יודע הרבה יותר ממה שאתה אומר.`
+    : `מבחינת החוקרים אתה ${investigatedVerb} כ${suspectNoun}, ולכן כל תשובה שלך נבחנת גם כסימן למעורבות ישירה באירוע.`;
   const toneInstructions = {
     neutral: 'החוקר מדבר רשמי וענייני. שמור על שליטה עצמית, אבל אל תהיה רובוטי.',
     empathetic: 'החוקר מדבר ברוך יחסי. אם אין איום ישיר, אתה יכול להיפתח מעט בלי לוותר על ההגנות שלך.',
@@ -159,10 +164,15 @@ const buildSuspectSystemPrompt = ({ suspect, caseDoc, tone, stressDelta }) => {
   const guiltInstruction = suspect.isGuilty
     ? 'אתה יודע שאתה מעורב ישירות במה שקרה, ולכן אתה מגן על עצמך באופן פעיל ומנסה לא לחשוף את החלק שלך.'
     : 'אתה לא האחראי הישיר למה שקרה, אבל אתה בהחלט מסתיר משהו משלך וחושש שידביקו לך את המקרה אם תדבר לא נכון.';
+  const genderSelfInstruction = suspectGender === 'female'
+    ? 'אתה מגלם/ה דמות נקבה - כל התייחסות עצמית לאורך התשובה (פעלים, שמות תואר, כינויי גוף בגוף ראשון) חייבת להישאר עקבית בלשון נקבה, מתחילת התשובה ועד סופה.'
+    : 'אתה מגלם דמות זכר - כל התייחסות עצמית לאורך התשובה (פעלים, שמות תואר, כינויי גוף בגוף ראשון) חייבת להישאר עקבית בלשון זכר, מתחילת התשובה ועד סופה.';
+  const playerAddressInstruction = 'מגדר החוקר/ת שמולך אינו ידוע לך. כשאתה פונה אליו/ה ישירות בגוף שני, השתדל לנסח בצורה שלא תלויה במגדר (שאלה נגדית, ניסוח עקיף, זמן עבר/הווה שלא מחייב אתה/את) במקום לנחש אם הוא זכר או נקבה.';
 
-  return `אתה ${suspect.name}, נחקר כעת בחדר חקירות משטרתי במסגרת חקירה פלילית חמורה.
+  return `אתה ${suspect.name}, ${investigatedVerb} כעת בחדר חקירות משטרתי במסגרת חקירה פלילית חמורה.
 תפקיד במערכת: ${suspect.role}
 סטטוס חקירה: ${investigationStatusLabel}
+${genderSelfInstruction}
 אישיות: ${suspect.personality}
 המקרה הנחקר: ${incidentSummary}
 מיקום האירוע: ${incidentLocation}
@@ -185,6 +195,7 @@ ${suspect.stressMeter >= (suspect.breakingPoint || 70) ? 'אתה קרוב מאו
 - אם השאלה לא נוגעת בנקודה רגישה, תן תשובה עניינית וקונקרטית מתוך נקודת המבט שלך.
 - אם השאלה רגישה, אתה יכול לשקר, להצטמצם, להיעלב, להילחץ או להישבר בהתאם לרמת הלחץ.
 - אל תגלה את הסוד שלך בקלות.
+- ${playerAddressInstruction}
 - אל תודה בפשע שלא ביצעת. אם אינך האשם, שמור על האמת המרכזית הזאת.
 - מותר לך לדבר על מה שראית, שמעת, עשית או ניסית להסתיר, אבל רק באופן שתואם את האינטרס שלך.
 - שלב שפת גוף רק לפעמים ובאופן עדין, למשל: (מסתכל הצידה), (מכווץ את הלסת), (קול ננעל), (נושף בכבדות).
@@ -290,6 +301,7 @@ router.post('/:id/consult', authenticateToken, async (req, res) => {
     const systemPrompt = `אתה המפקד הבכיר.
 אישיות: ${personalityMap[caseDoc.commanderPersonality]}
 אתה יודע את כל הפרטים הסודיים של התיק.
+מגדר החוקר/ת שמולך אינו ידוע לך - כשאתה פונה אליו/ה ישירות בגוף שני, השתדל לנסח בצורה שלא תלויה במגדר במקום לנחש אם הוא זכר או נקבה.
 חוקים קריטיים:
 - אף פעם אל תגלה מי האשם
 - אל תאשר או תשלול ישירות

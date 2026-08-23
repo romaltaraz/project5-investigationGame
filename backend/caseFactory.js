@@ -1,4 +1,6 @@
-import { DOCUMENT_ARTIFACT_TYPES } from './services/evidenceBlueprint.js';
+import {
+  DOCUMENT_ARTIFACT_TYPES, resolveGender, HEBREW_QUALITY_CORE, HEBREW_REGISTER, runHebrewQa,
+} from './services/evidenceBlueprint.js';
 
 const EVIDENCE_TYPES = ['message', 'photo', 'document', 'recording'];
 const INCIDENT_TIMES = ['19:40', '20:15', '20:55', '21:20', '22:10', '23:05'];
@@ -44,7 +46,28 @@ const CASE_SCENARIOS = [
 const LOCATIONS = ['מגדל משרדים מאובטח', 'מלון בוטיק', 'מעבדת מחקר פרטית', 'נמל יבשתי', 'גלריה סגורה', 'חדר בקרה עירוני'];
 const FIRST_NAMES = ['מאיה', 'אדם', 'דניאל', 'נועה', 'יונתן', 'ליה', 'רועי', 'תמר', 'איתן', 'יעל'];
 const LAST_NAMES = ['רוזן', 'לוי', 'ברק', 'קדם', 'שלו', 'גבע', 'ארז', 'סלע', 'נבו', 'דרור'];
-const ROLES = ['מנהל תפעול', 'איש תחזוקה', 'חוקרת פנים', 'עד ראייה', 'יועץ חיצוני', 'אחראית משמרת', 'שותף עסקי', 'מתאמת מערכת'];
+// Each role concept keeps its own grammatically masculine/feminine form -
+// Hebrew role nouns are gendered, so a single string can't correctly serve
+// both. `resolveRoleForGender` below picks the matching form from the
+// suspect's already-resolved gender (never from guessing at the string
+// itself, e.g. "does it end in ת"). A `neutral` field is supported for a
+// future role concept that turns out not to need gendering, but none of
+// the current concepts qualify - every one below has a natural, idiomatic
+// pair in Hebrew.
+const ROLE_DEFINITIONS = [
+  { male: 'מנהל תפעול', female: 'מנהלת תפעול' },
+  { male: 'איש תחזוקה', female: 'אשת תחזוקה' },
+  { male: 'חוקר פנים', female: 'חוקרת פנים' },
+  { male: 'עד ראייה', female: 'עדת ראייה' },
+  { male: 'יועץ חיצוני', female: 'יועצת חיצונית' },
+  { male: 'אחראי משמרת', female: 'אחראית משמרת' },
+  { male: 'שותף עסקי', female: 'שותפה עסקית' },
+  { male: 'מתאם מערכת', female: 'מתאמת מערכת' },
+];
+
+const resolveRoleForGender = (roleDefinition, gender) => (
+  roleDefinition.neutral || (gender === 'female' ? roleDefinition.female : roleDefinition.male)
+);
 const PERSONALITIES = [
   'מחושב, מדבר מעט, בוחר כל מילה בזהירות.',
   'לחוץ, קופץ בין פרטים ומנסה להישמע בטוח יותר ממה שהוא.',
@@ -207,11 +230,41 @@ const uniqueNames = (count) => {
   return [...names];
 };
 
-const buildAlibi = (name, location, role, index) => {
+// Gender comes from the resolved suspect gender (deterministic-by-name
+// fallback when the AI hasn't assigned one yet - see resolveGender), never
+// from guessing at the role string's spelling.
+const buildAlibi = (name, location, role, index, gender) => {
   const hours = ['20:15', '20:40', '21:05', '21:30', '21:50'];
   const spots = ['בחדר הבקרה', 'ליד המעלית', 'בכניסה האחורית', 'במשרד הצדדי', 'ליד אזור השירות'];
-  return `${name.split(' ')[0]} טוען${role.endsWith('ת') ? 'ת' : ''} שבשעה ${hours[index % hours.length]} היה ${spots[index % spots.length]} בתוך ${location}.`;
+  const claimVerb = gender === 'female' ? 'טוענת' : 'טוען';
+  const wasVerb = gender === 'female' ? 'הייתה' : 'היה';
+  return `${name.split(' ')[0]} ${claimVerb} שבשעה ${hours[index % hours.length]} ${wasVerb} ${spots[index % spots.length]} בתוך ${location}.`;
 };
+
+// Correction-only Hebrew QA over each suspect's alibi text specifically -
+// reuses the exact same runHebrewQa surgical-edit pass already used for
+// WhatsApp/recording/document text, just pointed at a new field. Only the
+// alibi string and the suspect's own name/gender are sent - never role,
+// secret, truthProfile, or anything solution-related - so there is nothing
+// in the QA's input a rewrite could leak or a correction could touch
+// beyond that one sentence. Independent per-suspect calls (not one batched
+// call for all suspects) so one suspect's QA failing can never cost the
+// others their correction - same isolation the other QA call sites rely on.
+export const applySuspectAlibiHebrewQa = async ({ generateAiText, suspects }) => Promise.all(
+  (suspects || []).map(async (suspect) => {
+    const alibi = `${suspect?.alibi || ''}`.trim();
+    if (!alibi) return suspect;
+
+    const [corrected] = await runHebrewQa({
+      generateAiText,
+      items: [{ speaker: suspect.name, text: alibi }],
+      registerBlock: HEBREW_REGISTER.suspectAlibi,
+      speakerGenders: { [suspect.name]: resolveGender(suspect) },
+    });
+
+    return { ...suspect, alibi: corrected?.text ?? suspect.alibi };
+  }),
+);
 
 const buildEvidence = (scenario, guiltyName, location) => [
   {
@@ -296,13 +349,21 @@ const buildCaseSkeleton = () => {
   const motive = randomItem(scenario.motiveOptions);
 
   const baseSuspects = names.map((name, index) => {
-    const role = randomItem(ROLES);
+    // Gender resolved BEFORE the role, so the role's grammatical form is
+    // always picked to match it - never guessed from the role string
+    // afterward. Deterministic-by-name at this point (no AI-assigned
+    // profile exists yet) - the same derivation resolveGender falls back
+    // to everywhere else, so this stays consistent with the suspect's
+    // final gender.
+    const gender = resolveGender({ name });
+    const role = resolveRoleForGender(randomItem(ROLE_DEFINITIONS), gender);
 
     return {
       name,
       role,
       involvementType: deriveInvolvementTypeFromRole(role),
       isGuilty: index === culpritIndex,
+      gender,
     };
   });
 
@@ -326,7 +387,7 @@ const buildFallbackCaseData = (difficulty, commanderPersonality, skeleton = buil
   const suspects = baseSuspects.map((suspect, index) => ({
     ...suspect,
     personality: randomItem(PERSONALITIES),
-    alibi: buildAlibi(suspect.name, location, suspect.role, index),
+    alibi: buildAlibi(suspect.name, location, suspect.role, index, suspect.gender),
     secret: SECRET_TEMPLATES[index % SECRET_TEMPLATES.length],
   }));
 
@@ -361,6 +422,7 @@ const STYLE_INSTRUCTIONS = `כתוב הכול בעברית טבעית, שוטפ�
 כל שדה טקסטואלי חייב להכיל פרטים קונקרטיים מתוך המקרה עצמו: זמן, מקום, יחסים בין הדמויות, אינטרסים וסתירות.
 אם ניסוח כלשהו נשמע גנרי, קצר מדי או לא טבעי, נסח אותו מחדש לפני ההחזרה.
 אל תשתמש בביטויים חלשים כמו "משהו קרה", "בעיה", "תיאור קצר", "לא ידוע" או "יש סתירה" בלי לפרט מהי.
+${HEBREW_QUALITY_CORE}
 החזר רק JSON תקין ללא טקסט נוסף, ובלי גרשיים (") בתוך ערכי מחרוזות (במקום ד"ר כתוב ד׳ר).`;
 
 const buildSuspectRosterLine = (skeleton) => skeleton.baseSuspects
@@ -406,9 +468,11 @@ const buildSuspectsDetailPrompt = (skeleton, difficulty) => `צור עבור ת�
 
 הקשר התיק (קבוע, אל תשנה אותו): הזירה היא ${skeleton.location}, האירוע הוא "${skeleton.scenario.incident}", חלון הזמן הקריטי הוא ${skeleton.incidentTime}.
 רשימת המעורבים לפי הסדר (סודי, לשימוש פנימי בלבד - אל תחשוף מי מהם אשם בטקסט עצמו):
-${skeleton.baseSuspects.map((suspect, index) => `${index + 1}. ${suspect.name}, תפקיד: ${suspect.role}, ${suspect.isGuilty ? 'זהו האחראי בפועל לאירוע' : 'לא אחראי/ת לאירוע'}`).join('\n')}
+${skeleton.baseSuspects.map((suspect, index) => `${index + 1}. ${suspect.name}, תפקיד: ${suspect.role}, מגדר: ${suspect.gender === 'female' ? 'אישה' : 'גבר'}, ${suspect.isGuilty ? 'זהו האחראי בפועל לאירוע' : 'לא אחראי/ת לאירוע'}`).join('\n')}
 
 ${STYLE_INSTRUCTIONS}
+
+חשוב לגבי מגדר: כתוב את personality/alibi/secret של כל דמות בהתאמה דקדוקית מלאה למגדר שצוין לה למעלה (גוף ראשון ושלישי כאחד - פעלים, כינויי גוף, שמות תואר). בשדות appearanceProfile.gender ו-voiceProfile.gender החזר בדיוק את אותו מגדר שצוין למעלה (female או male בלבד) - אל תסטה ממנו ואל תבחר מגדר שונה בין שני השדות.
 
 לכל דמות הוסף גם appearanceProfile ו-voiceProfile: פרופיל זהות קבוע שישמש בעתיד ליצירת תמונות והקלטות עקביות לאותה דמות. כתוב את הערכים באנגלית מבנית קצרה (לא עברית, לא משפטים) - זו מטא-דאטה טכנית, לא טקסט שהשחקן רואה. שמור על עקביות פנימית (לדוגמה גיל שמתאים לתפקיד).
 

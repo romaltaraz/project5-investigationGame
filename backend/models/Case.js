@@ -50,6 +50,12 @@ const suspectSchema = new mongoose.Schema({
     tone: String,
     accent: String,
     personality: String,
+    // TTS provider identity - resolved once (deterministically, from the
+    // character's name) the first time a recording needs this character's
+    // voice, then reused. Optional/additive: cases generated before TTS
+    // existed simply have these unset.
+    provider: String,
+    voiceId: String,
   },
 });
 
@@ -66,6 +72,12 @@ const evidenceVoiceProfileSchema = new mongoose.Schema({
     tone: String,
     accent: String,
     personality: String,
+    // TTS provider identity - resolved once (deterministically, from the
+    // character's name) the first time a recording needs this character's
+    // voice, then reused. Optional/additive: cases generated before TTS
+    // existed simply have these unset.
+    provider: String,
+    voiceId: String,
   },
 }, { _id: false });
 
@@ -114,10 +126,13 @@ const evidenceSchema = new mongoose.Schema({
   // נפרד מ-type כדי שהרנדור יוכל להשתנות (כולל בעתיד ליצירת תמונה ב-FLUX)
   // מבלי לשנות את מודל הנתונים.
   artifactType: String,
-  // תוכן מובנה שנוצר ע"י ה-AI לפני רינדור: הודעות ווטסאפ / תוכן מסמך.
+  // תוכן מובנה שנוצר ע"י ה-AI לפני רינדור: הודעות ווטסאפ / תוכן מסמך /
+  // דיאלוג הקלטה (turns עם speaker/text/emotion/pace/pauseAfterMs/
+  // startTime/endTime בפועל - ראה services/recordingEvidence.js).
   // ה-AI אחראי על התוכן, שכבת הרינדור אחראית על האמנות הסופית.
   messageData: mongoose.Schema.Types.Mixed,
   documentData: mongoose.Schema.Types.Mixed,
+  recordingData: mongoose.Schema.Types.Mixed,
 });
 
 const briefingDetailsSchema = new mongoose.Schema({

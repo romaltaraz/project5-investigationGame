@@ -13,9 +13,7 @@
   min-height: 100vh;
   width: 100%;
   padding: 24px;
-  background:
-    radial-gradient(circle at top left, rgba(196, 107, 58, 0.12), transparent 24%),
-    linear-gradient(180deg, #080808, #100d0b 50%, #0b0a09);
+  background: var(--bg-primary);
 }
 
 .inv-loader__stage {
