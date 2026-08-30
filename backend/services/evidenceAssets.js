@@ -1,6 +1,7 @@
 ﻿import fs from 'fs/promises';
 import path from 'path';
 import OpenAI from 'openai';
+import { NVIDIA_TEXT_MODEL } from '../caseFactory.js';
 import { buildValidNameSet, DEFAULT_ARTIFACT_TYPE } from './evidenceBlueprint.js';
 import { generateStructuredMessage } from './whatsappEvidence.js';
 import { generateStructuredDocument } from './documentEvidence.js';
@@ -62,7 +63,7 @@ const openai = new OpenAI({
   baseURL: 'https://integrate.api.nvidia.com/v1',
 });
 
-const AI_MODEL = 'meta/llama-3.3-70b-instruct';
+const AI_MODEL = NVIDIA_TEXT_MODEL;
 
 // ── Helper: generate text content via AI ────────────────────────────────────
 
@@ -73,7 +74,7 @@ const generateAiText = async (systemPrompt, userPrompt) => {
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
-    max_tokens: 1100, // structured JSON blueprints (messageData/documentData) need headroom beyond short freeform text
+    max_tokens: 4096, // structured JSON blueprints (messageData/documentData/dialogue) need headroom beyond short freeform text. 1100 truncated the 6–10 message Hebrew WhatsApp messageData (finish_reason:"length" → invalid JSON → fallback); with this reasoning model the completion (reasoning + JSON) was measured at 1500–2050+ tokens, so 4096 gives ~2x margin. It's a ceiling, not an allocation: short responses (freeform fallbacks ~300 tok, Hebrew QA ~1350 tok) still stop at their natural end, so usage/cost for those paths is unchanged.
     temperature: 0.85,
   });
   return response.choices[0].message.content.trim();
@@ -293,9 +294,23 @@ const renderDocumentHtml = ({ caseName, briefingDetails, evidence, caseId, aiCon
 
 // ── AI prompt builders ───────────────────────────────────────────────────────
 
+// Fallback-path participant resolution — mirrors the structured generators
+// (whatsappEvidence.js / recordingEvidence.js): honour evidence.participants
+// when it names at least two real suspects, otherwise keep the previous
+// "first two suspects" behaviour so a missing/incomplete list never breaks.
+const resolveFallbackParticipants = (evidence, suspects = []) => {
+  const validNameSet = buildValidNameSet(suspects);
+  const declaredParticipants = Array.isArray(evidence.participants) ? evidence.participants : [];
+  const validDeclared = declaredParticipants.filter((name) => validNameSet.has(name));
+  return validDeclared.length >= 2
+    ? validDeclared.slice(0, 2).map((name) => suspects.find((suspect) => suspect.name === name))
+    : (suspects || []).slice(0, 2);
+};
+
 const buildRecordingPrompt = ({ evidence, suspects, briefingDetails }) => {
-  const nameA = suspects[0]?.name || 'קול א';
-  const nameB = suspects[1]?.name || 'קול ב';
+  const [participantA, participantB] = resolveFallbackParticipants(evidence, suspects);
+  const nameA = participantA?.name || 'קול א';
+  const nameB = participantB?.name || 'קול ב';
   return {
     system: `אתה מערכת כתיבה יוצרת עבור משחק בלשים. עליך לכתוב תמלול של שיחה מיורטת.
 כלל ברזל: כתוב אך ורק את שורות הדיאלוג עצמן, לא הסברים ולא תיאורים.
@@ -319,8 +334,9 @@ const buildRecordingPrompt = ({ evidence, suspects, briefingDetails }) => {
 };
 
 const buildMessagePrompt = ({ evidence, suspects }) => {
-  const nameA = suspects[0]?.name || 'א';
-  const nameB = suspects[1]?.name || 'ב';
+  const [participantA, participantB] = resolveFallbackParticipants(evidence, suspects);
+  const nameA = participantA?.name || 'א';
+  const nameB = participantB?.name || 'ב';
   return {
     system: `אתה כותב הודעות ווטסאפ אמיתיות לצורך משחק בלשים.
 כלל ברזל: כתוב אך ורק את הודעות הצ׳אט עצמן, לא הסברים ולא תיאורים.`,
@@ -358,11 +374,15 @@ const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, sus
   const fileBase = `${String(index + 1).padStart(2, '0')}-${sanitizeFileSegment(evidence.type)}-${sanitizeFileSegment(caseName)}`;
 
   if (evidence.type === 'photo') {
-    const prompt = buildImagePrompt(evidence, suspects, { caseName, briefingDetails });
+    const {
+      prompt, width, height, seed, captureProfile,
+    } = buildImagePrompt(evidence, suspects, {
+      caseId, index, caseName, briefingDetails, difficulty,
+    });
     if (process.env.NODE_ENV !== 'production') {
-      console.log(`🖼️  FLUX prompt [${evidence.type} #${index + 1}]:`, prompt);
+      console.log(`🖼️  FLUX prompt [${evidence.type} #${index + 1}] profile=${captureProfile} seed=${seed} dims=${width}x${height}:`, prompt);
     }
-    const { buffer, mimeType, extension } = await generateFluxImage(prompt);
+    const { buffer, mimeType, extension } = await generateFluxImage(prompt, { width, height, seed });
     const filename = `${fileBase}.${extension}`;
     await fs.writeFile(path.join(caseDir, filename), buffer);
     return buildAssetEnvelope(evidence, filename, mimeType, 'photo', { caseId });
@@ -412,7 +432,10 @@ const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, sus
     const validNameSet = buildValidNameSet(suspects);
     const structured = await generateStructuredMessage({
       generateAiText, evidence, suspects, briefingDetails, validNameSet, caseName,
-    }).catch(() => null);
+    }).catch((err) => {
+      console.error(`⚠️ Structured WhatsApp message failed for evidence #${index + 1}, falling back to generic renderer:`, err.message);
+      return null;
+    });
 
     if (structured) {
       const filename = `${fileBase}.${structured.rendered.extension}`;

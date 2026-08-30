@@ -10,7 +10,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "tsc": "tsc -w",
     "dev": "nodemon --watch dist --exec node dist/index.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "smoke:premise": "node scripts/smokeTestPremise.mjs"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

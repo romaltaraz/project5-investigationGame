@@ -7,9 +7,13 @@ import { authenticateToken } from '../middleware/auth.js';
 import OpenAI from 'openai';
 import {
   EVIDENCE_TYPES,
+  NVIDIA_TEXT_MODEL,
   buildCaseSkeleton,
+  buildSkeletonFromPremise,
+  conceptSignatureCollides,
   buildFallbackCaseData,
   enrichCaseText,
+  buildCasePremisePrompt,
   buildCommanderAndBackstoryPrompt,
   buildBriefingDetailsPrompt,
   buildSuspectsDetailPrompt,
@@ -157,6 +161,26 @@ const caseNeedsEvidenceAssets = (caseDoc) => (caseDoc?.evidence || []).some((ite
 // Track in-progress generation to avoid duplicate concurrent runs for the same case
 const _evidenceGenerationInProgress = new Set();
 
+// Shared per-case guard around generateEvidenceAssets() - used by BOTH trigger
+// points (this file's POST /generate background kickoff, and GET's
+// ensureCaseEvidenceAssets below) so a case can never have two generation runs
+// in flight at once regardless of which one started first. Keyed by caseId, so
+// different cases still generate fully concurrently. Returns null instead of
+// running when a generation for this exact case is already in progress - the
+// caller treats that as "nothing to do here", never as a failure.
+const runGuardedEvidenceGeneration = async (caseId, run) => {
+  if (_evidenceGenerationInProgress.has(caseId)) {
+    return null;
+  }
+
+  _evidenceGenerationInProgress.add(caseId);
+  try {
+    return await run();
+  } finally {
+    _evidenceGenerationInProgress.delete(caseId);
+  }
+};
+
 const ensureCaseEvidenceAssets = async (caseDoc) => {
   if (!caseDoc || !caseNeedsEvidenceAssets(caseDoc)) {
     return caseDoc;
@@ -164,14 +188,7 @@ const ensureCaseEvidenceAssets = async (caseDoc) => {
 
   const caseId = caseDoc._id.toString();
 
-  // Skip if already generating for this case (concurrent GET requests)
-  if (_evidenceGenerationInProgress.has(caseId)) {
-    return caseDoc;
-  }
-
-  _evidenceGenerationInProgress.add(caseId);
-
-  try {
+  const generatedEvidence = await runGuardedEvidenceGeneration(caseId, async () => {
     // caseDoc here comes from a client-facing query that deliberately excludes
     // solution/suspects.appearanceProfile/suspects.voiceProfile (see the
     // .select() calls below) - but the generators need all of that (FLUX
@@ -180,7 +197,7 @@ const ensureCaseEvidenceAssets = async (caseDoc) => {
     // for generation purposes only; nothing from it is sent to the client.
     const fullCaseDoc = await Case.findById(caseId).lean();
 
-    const generatedEvidence = await generateEvidenceAssets({
+    return generateEvidenceAssets({
       caseId,
       caseName: fullCaseDoc.caseName,
       briefingDetails: fullCaseDoc.briefingDetails || {},
@@ -189,15 +206,19 @@ const ensureCaseEvidenceAssets = async (caseDoc) => {
       difficulty: fullCaseDoc.difficulty,
       solution: fullCaseDoc.solution,
     });
+  });
 
-    const mappedEvidence = generatedEvidence.map((item) => mapEvidenceForStorage(item));
-
-    // Use findByIdAndUpdate to avoid Mongoose VersionError from concurrent saves
-    await Case.findByIdAndUpdate(caseId, { evidence: mappedEvidence });
-    caseDoc.evidence = mappedEvidence;
-  } finally {
-    _evidenceGenerationInProgress.delete(caseId);
+  if (!generatedEvidence) {
+    // A generation run for this case is already in progress (started via the
+    // other trigger point) - nothing to do here.
+    return caseDoc;
   }
+
+  const mappedEvidence = generatedEvidence.map((item) => mapEvidenceForStorage(item));
+
+  // Use findByIdAndUpdate to avoid Mongoose VersionError from concurrent saves
+  await Case.findByIdAndUpdate(caseId, { evidence: mappedEvidence });
+  caseDoc.evidence = mappedEvidence;
 
   return caseDoc;
 };
@@ -378,7 +399,7 @@ const normalizeCaseData = (caseData, difficulty, commanderPersonality, fallback 
   return enrichCaseText(normalizedCase, fallback);
 };
 
-const parseAiCasePayload = (content = '') => {
+export const parseAiCasePayload = (content = '') => {
   // Strip markdown code fences
   let cleaned = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
 
@@ -415,6 +436,27 @@ router.post('/generate', authenticateToken, async (req, res) => {
 
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: 'משתמש לא נמצא' });
+
+    // תגי-תוכן קצרים (conceptSignature) מהתיקים האחרונים של המשתמש הזה, נשלפים
+    // לפני יצירת התיק החדש (ולפני שריון ה-placeholder למטה, כדי שלא יכלול אותו)
+    // כדי להזין אותם ל-AI שממציא את התעלומה החדשה כהנחיית "תהיה שונה מאלה" (ראו
+    // buildCasePremisePrompt) - המימוש של case-diversity-check מסעיף 14 בבריף.
+    const recentCases = await Case.find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .select('caseName conceptSignature suspects.name solution.motive')
+      .lean();
+    const recentSignatures = recentCases
+      .filter((c) => c.conceptSignature && Object.values(c.conceptSignature).some(Boolean))
+      .map((c) => ({
+        caseName: c.caseName,
+        conceptSignature: c.conceptSignature,
+        // Feeds buildRecentCaseAvoidanceBlock's character-name-reuse guard - same
+        // filtered cohort as above, just carrying one more field through.
+        suspects: (c.suspects || []).map((s) => s?.name).filter(Boolean),
+        // Feeds the soft motive-variety nudge - same cohort, same pattern.
+        motive: c.solution?.motive,
+      }));
 
     // user.activeCases מתעדכן אוטומטית רק דרך פעולות האפליקציה (למשל סגירת תיק ב-
     // investigate.js). אם תיק נמחק ישירות ב-Mongo (בעקיפין לגמרי מהאפליקציה), ה-ObjectId
@@ -472,12 +514,6 @@ router.post('/generate', authenticateToken, async (req, res) => {
       });
     }
 
-    // בונים "שלד" תיק באופן מקומי ומיידי (בלי AI): זירה, שעה, שמות ותפקידי המעורבים, מי אשם.
-    // זה מבטיח שכל קריאות ה-AI המקביליות מתייחסות לאותם עובדות בדיוק, וגם משמש רשת ביטחון
-    // עקבית אם קריאה מסוימת נכשלת (הנפילה חוזרת לאותו שלד, לא לתיק אקראי אחר).
-    const skeleton = buildCaseSkeleton();
-    const fallback = buildFallbackCaseData(difficulty, commanderPersonality, skeleton);
-
     const openai = new OpenAI({
       apiKey: process.env.NVIDIA_API_KEY,
       baseURL: 'https://integrate.api.nvidia.com/v1',
@@ -490,12 +526,21 @@ router.post('/generate', authenticateToken, async (req, res) => {
 
     const runSection = async (label, prompt) => {
       try {
+        // Most section builders (commander/briefing/suspects/evidence) return a
+        // plain string user prompt, paired with the generic SYSTEM_PROMPT above.
+        // buildCasePremisePrompt is the one builder that returns { system, user }
+        // instead - it needs its own system message sent separately, not the
+        // whole object stringified into a single "content" field.
+        const isStructuredPrompt = prompt && typeof prompt === 'object';
+        const systemContent = isStructuredPrompt ? (prompt.system || SYSTEM_PROMPT) : SYSTEM_PROMPT;
+        const userContent = isStructuredPrompt ? prompt.user : prompt;
+
         const aiResponse = await openai.chat.completions.create({
-          model: 'meta/llama-3.3-70b-instruct',
+          model: NVIDIA_TEXT_MODEL,
           temperature: 0.7,
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: prompt },
+            { role: 'system', content: systemContent },
+            { role: 'user', content: userContent },
           ],
         });
 
@@ -512,7 +557,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
     // exact same runHebrewQa pass without a separate AI integration.
     const generateAiText = async (systemPrompt, userPrompt) => {
       const aiResponse = await openai.chat.completions.create({
-        model: 'meta/llama-3.3-70b-instruct',
+        model: NVIDIA_TEXT_MODEL,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
@@ -522,6 +567,44 @@ router.post('/generate', authenticateToken, async (req, res) => {
       });
       return aiResponse.choices[0].message.content.trim();
     };
+
+    // "שלד" התיק: זירה, שעה, שמות ותפקידי המעורבים, מי אשם, שיטה ומניע. כל קריאות
+    // ה-AI המקבילות למטה מתייחסות לאותן עובדות בדיוק ברגע שהשלד קיים - זה הבסיס
+    // ש-buildFallbackCaseData נשען עליו גם אם קריאה מסוימת נכשלת.
+    //
+    // המקור העיקרי לשלד הוא קריאת AI אחת (buildCasePremisePrompt) שממציאה תעלומה
+    // מקורית במקום לבחור מתוך CASE_SCENARIOS/LOCATIONS/ROLE_DEFINITIONS הקבועים -
+    // אלה נשארים כרשת ביטחון דטרמיניסטית (buildCaseSkeleton) למקרה שקריאת ה-AI
+    // נכשלת לגמרי או מחזירה תוצאה שלא ניתנת לשימוש, בדיוק כמו הרשת שכל 4 הקריאות
+    // המקבילות כבר משתמשות בה היום.
+    let skeleton = null;
+    const premise = await runSection('premise', buildCasePremisePrompt(difficulty, recentSignatures));
+    if (premise) {
+      try {
+        skeleton = buildSkeletonFromPremise(premise);
+      } catch (skeletonError) {
+        console.error('⚠️ Failed to build skeleton from AI premise, falling back to template skeleton:', skeletonError.message);
+        skeleton = null;
+      }
+    }
+
+    // גיבוי מקומי וזול (בלי קריאת AI נוספת לשיפוט) - אם התעלומה שחזרה עדיין דומה
+    // מדי לתיקים האחרונים של המשתמש, ניסיון חוזר אחד בלבד עם הנחיה נחרצת יותר.
+    // לעולם לא חוסם את יצירת התיק - אם גם הניסיון החוזר נכשל, ממשיכים עם מה שיש.
+    if (skeleton && recentSignatures.some((entry) => conceptSignatureCollides(entry.conceptSignature, skeleton.conceptSignature))) {
+      const retryPremise = await runSection('premise-retry', buildCasePremisePrompt(difficulty, recentSignatures, true));
+      if (retryPremise) {
+        try {
+          skeleton = buildSkeletonFromPremise(retryPremise);
+        } catch (retryError) {
+          console.error('⚠️ Failed to build skeleton from retried AI premise, keeping previous premise:', retryError.message);
+        }
+      }
+    }
+
+    if (!skeleton) skeleton = buildCaseSkeleton();
+
+    const fallback = buildFallbackCaseData(difficulty, commanderPersonality, skeleton);
 
     // עד 4 קריאות AI במקביל, כל אחת מייצרת חלק אחר וקטן יותר של התיק על בסיס אותו שלד -
     // מקצר משמעותית את זמן ההמתנה הכולל לעומת קריאה אחת גדולה שמייצרת הכול ברצף.
@@ -583,6 +666,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
         commanderPersonality,
         commanderBrief: normalizedCase.commanderBrief,
         briefingDetails: normalizedCase.briefingDetails,
+        conceptSignature: skeleton.conceptSignature || undefined,
         backstory: normalizedCase.backstory,
         solution: normalizedCase.solution,
         suspects: normalizedCase.suspects.map(s => ({
@@ -654,7 +738,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
     });
 
     // יצירת נכסי ראיות ברקע — לא חוסם את התגובה
-    generateEvidenceAssets({
+    runGuardedEvidenceGeneration(newCase._id.toString(), () => generateEvidenceAssets({
       caseId: newCase._id.toString(),
       caseName: newCase.caseName,
       briefingDetails: newCase.briefingDetails || {},
@@ -662,7 +746,8 @@ router.post('/generate', authenticateToken, async (req, res) => {
       evidence: (newCase.evidence || []).map((item) => item.toObject?.() || item),
       difficulty: newCase.difficulty,
       solution: newCase.solution,
-    }).then(async (generatedEvidence) => {
+    })).then(async (generatedEvidence) => {
+      if (!generatedEvidence) return; // a run for this case was already in progress
       await Case.findByIdAndUpdate(newCase._id, {
         evidence: generatedEvidence.map((item) => mapEvidenceForStorage(item))
       });
@@ -700,7 +785,7 @@ router.post('/generate', authenticateToken, async (req, res) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const cases = await Case.find({ userId: req.user.userId })
-      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -suspects.appearanceProfile -suspects.voiceProfile -evidence.hiddenClue -evidence.purpose -evidence.primaryClue -evidence.secondaryClue -evidence.visualDetails -evidence.voiceProfiles -evidence.messageData -evidence.documentData -evidence.recordingData')
+      .select('-solution -backstory -conceptSignature -suspects.secret -suspects.truthProfile -suspects.isGuilty -suspects.appearanceProfile -suspects.voiceProfile -evidence.hiddenClue -evidence.purpose -evidence.primaryClue -evidence.secondaryClue -evidence.visualDetails -evidence.voiceProfiles -evidence.messageData -evidence.documentData -evidence.recordingData')
       .sort({ createdAt: -1 });
 
     res.json({ cases: cases.map((caseDoc) => serializeCaseForClient(caseDoc)) });
@@ -722,7 +807,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       _id: req.params.id,
       userId: req.user.userId
     })
-      .select('-solution -backstory -suspects.secret -suspects.truthProfile -suspects.isGuilty -suspects.appearanceProfile -suspects.voiceProfile -evidence.hiddenClue -evidence.purpose -evidence.primaryClue -evidence.secondaryClue -evidence.visualDetails -evidence.voiceProfiles -evidence.messageData -evidence.documentData -evidence.recordingData')
+      .select('-solution -backstory -conceptSignature -suspects.secret -suspects.truthProfile -suspects.isGuilty -suspects.appearanceProfile -suspects.voiceProfile -evidence.hiddenClue -evidence.purpose -evidence.primaryClue -evidence.secondaryClue -evidence.visualDetails -evidence.voiceProfiles -evidence.messageData -evidence.documentData -evidence.recordingData')
       .lean();
 
     if (!caseDoc) return res.status(404).json({ message: 'תיק לא נמצא' });

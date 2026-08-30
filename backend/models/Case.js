@@ -135,6 +135,18 @@ const evidenceSchema = new mongoose.Schema({
   recordingData: mongoose.Schema.Types.Mixed,
 });
 
+// תיוג קצר ועצמאי שה-AI מייצר לעצמו בזמן המצאת התעלומה (ראו buildCasePremisePrompt
+// ב-caseFactory.js) - לא טקסונומיה קבועה, רק "טביעת אצבע" זולה של הקונספט. משמש
+// אך ורק כדי להזין לתיק הבא של אותו משתמש הימנעות מהתיקים האחרונים שלו (ראו
+// conceptSignatureCollides), אף פעם לא נחשף לשחקן.
+const conceptSignatureSchema = new mongoose.Schema({
+  premiseType: String,
+  locationType: String,
+  relationshipStructure: String,
+  evidencePattern: String,
+  titleStyle: String,
+}, { _id: false });
+
 const briefingDetailsSchema = new mongoose.Schema({
   incidentTime: String,
   incidentLocation: String,
@@ -160,6 +172,7 @@ const caseSchema = new mongoose.Schema({
   difficulty: { type: String, enum: ['easy', 'medium', 'hard'], default: 'medium' },
   commanderBrief: { type: String, required: true }, // מה שהמפקד אומר בפתיחה
   briefingDetails: { type: briefingDetailsSchema, default: () => ({}) },
+  conceptSignature: { type: conceptSignatureSchema, default: undefined },
   commanderPersonality: { 
     type: String, 
     enum: ['cold', 'aggressive', 'mentor'], 
