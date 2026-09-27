@@ -30,6 +30,8 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.4.1",
+    "mpg123-decoder": "^1.0.3",
+    "msedge-tts": "^2.0.7",
     "openai": "^6.33.0",
     "pdfkit": "^0.18.0",
     "resend": "^6.18.1"

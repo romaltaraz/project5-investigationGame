@@ -14,6 +14,7 @@ import caseRoutes from './routes/cases.js';
 import investigateRoutes from './routes/investigate.js';
 import { authenticateToken } from './middleware/auth.js';
 import { sendPasswordResetCode } from './utils/mailer.js';
+import { startCaseChangeStream, sweepStuckGeneratingCases } from './services/caseEvents.js';
 
 dotenv.config();
 const app = express();
@@ -264,8 +265,14 @@ app.get('/profile', authenticateToken, (req, res) => {
   
 // MongoDB + Start Server
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => {
+  .then(async () => {
     console.log('✅ MongoDB connected');
+
+    // Resolve any case left mid-generation by a previous process, then start the
+    // single change stream that powers real-time case sync for all clients.
+    await sweepStuckGeneratingCases();
+    startCaseChangeStream();
+
     app.listen(port, () => console.log(`Server running on http://localhost:${port}`));
   })
   .catch(err => {

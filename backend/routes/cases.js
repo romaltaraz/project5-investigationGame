@@ -29,6 +29,11 @@ import {
   buildVoiceProfilesForParticipants,
   DOCUMENT_ARTIFACT_TYPES,
 } from '../services/evidenceBlueprint.js';
+import {
+  deriveInvolvementType,
+  serializeCaseForClient,
+} from '../services/caseSerializer.js';
+import { addCaseStreamClient } from '../services/caseEvents.js';
 
 const router = express.Router();
 
@@ -96,67 +101,32 @@ const buildVoiceProfile = (voiceProfile = {}, name = '') => (
     : deriveVoiceProfile(name)
 );
 
-const deriveInvolvementType = (suspect = {}, fallbackSuspect = {}) => {
-  const candidate = suspect?.involvementType || suspect?.participantType || fallbackSuspect?.involvementType;
+// serializeCaseForClient / serializeSuspectForClient / serializeEvidenceForClient /
+// deriveInvolvementType now live in services/caseSerializer.js so the SSE change
+// feed (services/caseEvents.js) emits the exact same client-safe shape.
 
-  if (candidate === 'suspect' || candidate === 'witness') {
-    return candidate;
-  }
+// Automatic-retry bound (see models/Case.js evidenceSchema.assetAttempts).
+// A permanently-broken provider call (NVIDIA 410/500/504, FLUX CONTENT_FILTERED,
+// ElevenLabs quota, ...) must stop being retried after a few tries instead of
+// forever - this is a COUNT, not a delay, and it is persisted per evidence item
+// in MongoDB so it survives across requests/restarts (an in-memory guard alone
+// cannot do this - see _evidenceGenerationInProgress below, which only ever
+// prevented CONCURRENT runs, never repeated SEQUENTIAL ones).
+const MAX_AUTO_ATTEMPTS = 3;
 
-  const role = `${suspect?.role || fallbackSuspect?.role || ''}`;
-  return /עד/.test(role) ? 'witness' : 'suspect';
-};
+// An item is only picked up for another AUTOMATIC attempt when it has never
+// succeeded, has no usable file, and hasn't already burned its automatic
+// attempt budget. Once assetAttempts reaches MAX_AUTO_ATTEMPTS the item is
+// left alone by ensureCaseEvidenceAssets - no more generation calls, no more
+// writes, no more updatedAt bumps, no more SSE echo - until something
+// explicitly resets assetAttempts (an intentional retry path, not built yet).
+const evidenceItemNeedsAutoAttempt = (item) => (
+  item?.assetStatus !== 'ready'
+  && !item?.fileUrl
+  && (item?.assetAttempts || 0) < MAX_AUTO_ATTEMPTS
+);
 
-const serializeSuspectForClient = (suspect = {}) => ({
-  name: suspect.name,
-  role: suspect.role,
-  involvementType: deriveInvolvementType(suspect),
-  personality: suspect.personality,
-  alibi: suspect.alibi,
-  stressMeter: suspect.stressMeter || 0,
-  breakingPoint: suspect.breakingPoint || 70,
-  currentTone: suspect.currentTone || 'neutral',
-});
-
-const serializeEvidenceForClient = (evidence = {}) => ({
-  type: evidence.type,
-  description: evidence.description,
-  isFound: Boolean(evidence.isFound),
-  fileUrl: evidence.fileUrl || '',
-  mimeType: evidence.mimeType || '',
-  assetType: evidence.assetType || '',
-  assetStatus: evidence.assetStatus || 'missing',
-  assetGeneratedAt: evidence.assetGeneratedAt || null,
-  assetTranscript: evidence.assetTranscript || '',
-  // Metadata only — not clue-revealing, safe to expose. purpose/secondaryClue/
-  // messageData/documentData stay server-only, same treatment as hiddenClue.
-  artifactType: evidence.artifactType || '',
-  participants: Array.isArray(evidence.participants) ? evidence.participants : [],
-});
-
-const serializeCaseForClient = (caseDoc) => {
-  const plainCase = typeof caseDoc?.toObject === 'function' ? caseDoc.toObject() : caseDoc;
-  const serializedId = plainCase?._id?.toString?.() || plainCase?.id;
-
-  return {
-    id: serializedId,
-    _id: serializedId,
-    caseName: plainCase?.caseName,
-    difficulty: plainCase?.difficulty,
-    commanderBrief: plainCase?.commanderBrief,
-    briefingDetails: plainCase?.briefingDetails,
-    commanderPersonality: plainCase?.commanderPersonality,
-    interactions: plainCase?.interactions || [],
-    investigatorNotes: plainCase?.investigatorNotes || '',
-    status: plainCase?.status,
-    createdAt: plainCase?.createdAt,
-    updatedAt: plainCase?.updatedAt,
-    suspects: (plainCase?.suspects || []).map((suspect) => serializeSuspectForClient(suspect)),
-    evidence: (plainCase?.evidence || []).map((evidence) => serializeEvidenceForClient(evidence)),
-  };
-};
-
-const caseNeedsEvidenceAssets = (caseDoc) => (caseDoc?.evidence || []).some((item) => !item?.fileUrl);
+const caseNeedsEvidenceAssets = (caseDoc) => (caseDoc?.evidence || []).some(evidenceItemNeedsAutoAttempt);
 
 // Track in-progress generation to avoid duplicate concurrent runs for the same case
 const _evidenceGenerationInProgress = new Set();
@@ -188,7 +158,16 @@ const ensureCaseEvidenceAssets = async (caseDoc) => {
 
   const caseId = caseDoc._id.toString();
 
-  const generatedEvidence = await runGuardedEvidenceGeneration(caseId, async () => {
+  // Resolves to the FULL evidence array (ready to save, original length/order/
+  // indexes intact) when something was actually attempted, or null when there
+  // was nothing to do - either a run for this case was already in progress
+  // (runGuardedEvidenceGeneration's own "already running" signal), or every
+  // item is already ready / has exhausted its automatic-attempt budget. Both
+  // collapse to the same "no-op" handling below: no generateEvidenceAssets
+  // call, no Mongo write, no updatedAt bump, no SSE echo - this is what
+  // breaks the GET /:id -> generate -> updatedAt -> change stream -> SSE ->
+  // GET /:id loop.
+  const outcome = await runGuardedEvidenceGeneration(caseId, async () => {
     // caseDoc here comes from a client-facing query that deliberately excludes
     // solution/suspects.appearanceProfile/suspects.voiceProfile (see the
     // .select() calls below) - but the generators need all of that (FLUX
@@ -196,25 +175,61 @@ const ensureCaseEvidenceAssets = async (caseDoc) => {
     // generator needs voiceProfile + solution). Re-fetch the full document
     // for generation purposes only; nothing from it is sent to the client.
     const fullCaseDoc = await Case.findById(caseId).lean();
+    if (!fullCaseDoc) return null;
 
+    // Re-check against the freshly-fetched evidence (not the possibly-stale
+    // caseDoc passed in). Build attemptIndexes from the ORIGINAL positions
+    // and bump attempt bookkeeping only on those items, but keep every item
+    // - attempted or not - in place in a full-length array in its original
+    // order. This is what generateEvidenceAssets is handed below, so its own
+    // loop index is always the item's true original position (the FLUX seed
+    // and the `${index+1}-...` filename/log numbering key off that index -
+    // passing a pre-filtered, shorter array here would silently shift it for
+    // any retried item).
+    const baseEvidence = fullCaseDoc.evidence || [];
+    const attemptIndexes = new Set();
+    const attemptStartedAt = new Date();
+    const evidenceForCall = baseEvidence.map((item, index) => {
+      if (!evidenceItemNeedsAutoAttempt(item)) {
+        return item;
+      }
+      attemptIndexes.add(index);
+      return {
+        ...item,
+        assetAttempts: (item.assetAttempts || 0) + 1,
+        assetLastAttemptAt: attemptStartedAt,
+      };
+    });
+
+    if (attemptIndexes.size === 0) {
+      // Everything is already ready, or every remaining item has exhausted
+      // MAX_AUTO_ATTEMPTS - nothing to regenerate, nothing to write.
+      return null;
+    }
+
+    // generateEvidenceAssets already returns a full-length array in the same
+    // order (it passes non-attempted indexes through untouched itself), so
+    // no further merge-by-index step is needed here.
     return generateEvidenceAssets({
       caseId,
       caseName: fullCaseDoc.caseName,
       briefingDetails: fullCaseDoc.briefingDetails || {},
       suspects: fullCaseDoc.suspects || [],
-      evidence: fullCaseDoc.evidence || [],
+      evidence: evidenceForCall,
+      attemptIndexes,
       difficulty: fullCaseDoc.difficulty,
       solution: fullCaseDoc.solution,
     });
   });
 
-  if (!generatedEvidence) {
-    // A generation run for this case is already in progress (started via the
-    // other trigger point) - nothing to do here.
+  if (!outcome) {
+    // Nothing to do this time (already in progress elsewhere, or no item
+    // needed an automatic attempt) - deliberately no write, no updatedAt
+    // bump, no SSE broadcast.
     return caseDoc;
   }
 
-  const mappedEvidence = generatedEvidence.map((item) => mapEvidenceForStorage(item));
+  const mappedEvidence = outcome.map((item) => mapEvidenceForStorage(item));
 
   // Use findByIdAndUpdate to avoid Mongoose VersionError from concurrent saves
   await Case.findByIdAndUpdate(caseId, { evidence: mappedEvidence });
@@ -318,6 +333,12 @@ const normalizeEvidence = (evidence = [], baseEvidence = [], validNameSet = new 
       location: `${item?.location || ''}`.trim() || defaultLocation,
       timeline: { time },
       visualDetails: coerceStringArray(item?.visualDetails),
+      // photo-only English visual scene description (see caseFactory.js
+      // buildEvidencePrompt + fluxImage.js buildImagePrompt). Optional: blank
+      // for non-photo items and for older/fallback evidence that never had it.
+      visualPromptEn: item?.type === 'photo'
+        ? `${item?.visualPromptEn || ''}`.trim().replace(/\s+/g, ' ').slice(0, 800)
+        : '',
       // Always re-derived from the case's own suspects — never trusts AI-supplied
       // voice data, so a character's voice can never drift between evidence items.
       voiceProfiles: buildVoiceProfilesForParticipants(suspects, participants),
@@ -339,6 +360,16 @@ const mapEvidenceForStorage = (evidence = {}) => ({
   assetStatus: evidence.assetStatus || 'missing',
   assetGeneratedAt: evidence.assetGeneratedAt || null,
   assetTranscript: evidence.assetTranscript || '',
+  // Automatic-retry bookkeeping (see caseNeedsEvidenceAssets/ensureCaseEvidenceAssets
+  // above) - must survive every write, or the attempt cap can't persist across
+  // requests/restarts and the old regeneration loop comes back.
+  assetAttempts: evidence.assetAttempts || 0,
+  assetLastAttemptAt: evidence.assetLastAttemptAt || null,
+  // Cleared on a successful (re)generation so a stale failure message never
+  // lingers next to assetStatus:'ready'; preserved otherwise. Previously this
+  // field was silently dropped here, which is why runtime failures (NVIDIA
+  // 410, FLUX CONTENT_FILTERED, ElevenLabs quota, ...) never reached MongoDB.
+  assetError: evidence.assetStatus === 'ready' ? '' : (evidence.assetError || ''),
   purpose: evidence.purpose || '',
   primaryClue: evidence.primaryClue || '',
   secondaryClue: evidence.secondaryClue || '',
@@ -346,6 +377,7 @@ const mapEvidenceForStorage = (evidence = {}) => ({
   location: evidence.location || '',
   timeline: { time: evidence.timeline?.time || '' },
   visualDetails: coerceStringArray(evidence.visualDetails),
+  visualPromptEn: evidence.visualPromptEn || '',
   voiceProfiles: Array.isArray(evidence.voiceProfiles) ? evidence.voiceProfiles : [],
   artifactType: evidence.artifactType || '',
   messageData: evidence.messageData || undefined,
@@ -514,6 +546,58 @@ router.post('/generate', authenticateToken, async (req, res) => {
       });
     }
 
+    // ✅ Hand-off point. The case now exists with a real id in 'generating'
+    // state and its slot is reserved atomically. Respond RIGHT NOW - every AI
+    // call runs detached in generateCaseInBackground() and updates this same
+    // document. The browser tracks completion/failure through the
+    // /api/cases/stream change-stream feed, so generation duration no longer
+    // touches this request and a client fetch timeout can never be mistaken for
+    // "generation failed".
+    const reservedId = reservedCase._id;
+    const pendingCasePayload = serializeCaseForClient(reservedCase);
+    reservedCase = null; // ownership handed to the background task - catch() must not delete it
+
+    res.status(202).json({
+      message: 'התיק נכנס לתהליך יצירה',
+      case: pendingCasePayload,
+    });
+
+    generateCaseInBackground({ reservedId, userId, difficulty, commanderPersonality, recentSignatures })
+      .catch((backgroundError) => console.error('❌ Background case generation crashed:', backgroundError));
+    return;
+
+  } catch (preHandoffError) {
+    console.error('❌ Case generation error (before hand-off):', preHandoffError.message);
+    if (preHandoffError.name === 'ValidationError') {
+      console.error('Mongoose validation:', JSON.stringify(preHandoffError.errors, null, 2));
+    }
+
+    // Only reachable for failures BEFORE the response (validation / slot
+    // reservation). Once generateCaseInBackground owns the case it flips it to
+    // 'failed' itself.
+    if (reservedCase) {
+      try {
+        await Case.findByIdAndDelete(reservedCase._id);
+        await User.findByIdAndUpdate(reservedCase.userId, { $pull: { activeCases: reservedCase._id } });
+      } catch (cleanupError) {
+        console.error('⚠️ Failed to release reserved case slot:', cleanupError.message);
+      }
+    }
+
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'שגיאה ביצירת התיק', error: preHandoffError.message });
+    }
+  }
+});
+
+// Runs detached from the HTTP request that reserved the 'generating' placeholder.
+// This IS the original generation pipeline, unchanged - same prompts, same AI
+// model, same FLUX/evidence flow. It only updates the reserved document in place
+// and, on unrecoverable failure, flips it to 'failed' (freeing the user's slot)
+// instead of leaving it stuck on the loading screen forever. Every state change
+// reaches the browser through the change-stream feed.
+async function generateCaseInBackground({ reservedId, userId, difficulty, commanderPersonality, recentSignatures }) {
+  try {
     const openai = new OpenAI({
       apiKey: process.env.NVIDIA_API_KEY,
       baseURL: 'https://integrate.api.nvidia.com/v1',
@@ -656,10 +740,10 @@ router.post('/generate', authenticateToken, async (req, res) => {
     }
 
     // מעדכנים את אותו מסמך שהוזמן מראש (לא יוצרים תיק שני!) ומעבירים אותו לסטטוס 'active'.
-    // reservedCase._id כבר נמצא ב-User.activeCases מההזמנה האטומית למעלה, אז אין צורך
-    // בעדכון נוסף על המשתמש כאן.
+    // reservedId כבר נמצא ב-User.activeCases מההזמנה האטומית ב-POST /generate, אז אין
+    // צורך בעדכון נוסף על המשתמש כאן.
     const newCase = await Case.findByIdAndUpdate(
-      reservedCase._id,
+      reservedId,
       {
         caseName: normalizedCase.caseName,
         difficulty,
@@ -700,44 +784,12 @@ router.post('/generate', authenticateToken, async (req, res) => {
     if (!newCase) {
       throw new Error('התיק השמור מראש לא נמצא בעדכון הסופי');
     }
-    console.log('✅ Case created:', newCase._id);
+    // status is now 'active' - the change stream pushes this to the browser,
+    // which swaps the loading UI for the finished case with no refresh.
+    console.log('✅ Case generated (background):', newCase._id);
 
-    // מהרגע הזה התיק תקין ופעיל ב-DB, אז אין יותר צורך לנקות אותו אם משהו אחר ייכשל בהמשך.
-    reservedCase = null;
-
-    // החזרה בטוחה ללקוח (בלי מידע סודי) — שולחים מיד לפני יצירת הנכסים
-    res.status(201).json({
-      message: 'תיק נוצר בהצלחה',
-      case: {
-        id: newCase._id,
-        caseName: newCase.caseName,
-        difficulty: newCase.difficulty,
-        commanderBrief: newCase.commanderBrief,
-        commanderPersonality: newCase.commanderPersonality,
-        suspects: newCase.suspects.map(s => ({
-          name: s.name,
-          role: s.role,
-          involvementType: deriveInvolvementType(s),
-          personality: s.personality,
-          alibi: s.alibi,
-          stressMeter: s.stressMeter || 0
-        })),
-        evidence: newCase.evidence.map(e => ({
-          type: e.type,
-          description: e.description,
-          isFound: e.isFound || false,
-          fileUrl: e.fileUrl || '',
-          mimeType: e.mimeType || '',
-          assetType: e.assetType || '',
-          assetStatus: e.assetStatus || 'missing',
-          assetTranscript: e.assetTranscript || '',
-          artifactType: e.artifactType || '',
-          participants: e.participants || [],
-        }))
-      }
-    });
-
-    // יצירת נכסי ראיות ברקע — לא חוסם את התגובה
+    // יצירת נכסי ראיות ברקע — לא חוסם את התגובה. עדכון ה-evidence כשמסתיים
+    // משדר אף הוא אירוע change-stream, כך שתמונות/הקלטות מופיעות מעצמן.
     runGuardedEvidenceGeneration(newCase._id.toString(), () => generateEvidenceAssets({
       caseId: newCase._id.toString(),
       caseName: newCase.caseName,
@@ -757,27 +809,27 @@ router.post('/generate', authenticateToken, async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Case generation error:', error.message);
+    console.error('❌ Background case generation failed:', error.message);
     if (error.name === 'ValidationError') {
       console.error('Mongoose validation:', JSON.stringify(error.errors, null, 2));
     }
 
-    // אם נכשלנו אחרי ששריינו סלוט (reservedCase עדיין לא אופס), חייבים למחוק את
-    // הפלייסהולדר ולשחרר אותו מ-User.activeCases, אחרת הוא נשאר תקוע וחוסם סלוט לתמיד.
-    if (reservedCase) {
-      try {
-        await Case.findByIdAndDelete(reservedCase._id);
-        await User.findByIdAndUpdate(reservedCase.userId, { $pull: { activeCases: reservedCase._id } });
-      } catch (cleanupError) {
-        console.error('⚠️ Failed to release reserved case slot:', cleanupError.message);
-      }
-    }
-
-    if (!res.headersSent) {
-      res.status(500).json({ message: 'שגיאה ביצירת התיק', error: error.message });
+    // The reserved placeholder is ours to resolve. Flip it to 'failed' so the
+    // client renders a genuine failure + retry (never a false "timeout"), and
+    // pull it from activeCases so the slot is freed. The change stream delivers
+    // this state to any open dashboard immediately.
+    try {
+      await Case.findByIdAndUpdate(reservedId, {
+        status: 'failed',
+        caseName: 'יצירת התיק נכשלה',
+        commanderBrief: 'משהו השתבש במהלך יצירת התיק. אפשר לנסות שוב מחדר המבצעים.',
+      });
+      await User.findByIdAndUpdate(userId, { $pull: { activeCases: reservedId } });
+    } catch (cleanupError) {
+      console.error('⚠️ Failed to mark case as failed:', cleanupError.message);
     }
   }
-});
+}
 
 // ======================
 // GET /api/cases
@@ -792,6 +844,44 @@ router.get('/', authenticateToken, async (req, res) => {
   } catch (error) {
     res.status(500).json({ message: 'שגיאה בטעינת התיקים', error: error.message });
   }
+});
+
+// ======================
+// GET /api/cases/stream   ← live case feed (SSE)
+// One server-side MongoDB change stream (services/caseEvents.js) fans out to
+// every connected browser. Must be declared BEFORE '/:id' so it isn't captured
+// as an id. EventSource can't send an Authorization header, so authenticateToken
+// also accepts ?token=... (see middleware/auth.js).
+// ======================
+router.get('/stream', authenticateToken, (req, res) => {
+  res.status(200).set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+
+  // retry: tells EventSource how fast to reconnect; the ": " lines are comments
+  // that just open the stream and act as keep-alive pings.
+  res.write('retry: 3000\n\n');
+  res.write(': connected\n\n');
+
+  const removeClient = addCaseStreamClient(req.user.userId, res);
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      /* socket died; 'close' below cleans up */
+    }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    removeClient();
+    res.end();
+  });
 });
 
 // ======================
@@ -853,6 +943,35 @@ router.put('/:id/notes', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: 'שגיאה בשמירת ההערות', error: error.message });
+  }
+});
+
+// ======================
+// DELETE /api/cases/:id
+// Used by the dashboard "retry" action on a failed case, and generally to
+// discard a case. Deleting fires a change-stream 'delete' event, so any open
+// client drops the card live.
+// ======================
+router.delete('/:id', authenticateToken, async (req, res) => {
+  try {
+    if (!req.params.id || !mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'מזהה תיק לא תקין.' });
+    }
+
+    const deleted = await Case.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.user.userId,
+    });
+
+    if (!deleted) {
+      return res.status(404).json({ message: 'תיק לא נמצא' });
+    }
+
+    await User.findByIdAndUpdate(req.user.userId, { $pull: { activeCases: deleted._id } });
+
+    res.json({ message: 'התיק נמחק' });
+  } catch (error) {
+    res.status(500).json({ message: 'שגיאה במחיקת התיק', error: error.message });
   }
 });
 

@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import BriefingPage from './pages/BriefingPage';
 import GamePage from './pages/GamePage';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { CaseStreamProvider } from './context/CaseStreamContext';
 import InvestigationLoader from './components/InvestigationLoader';
 
 function RouteGuard({ children, requiresAuth }) {
@@ -36,58 +37,60 @@ function RouteGuard({ children, requiresAuth }) {
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <Routes>
-          <Route
-            path="/"
-            element={(
-              <RouteGuard requiresAuth={false}>
-                <LoginPage />
-              </RouteGuard>
-            )}
-          />
-          <Route
-            path="/register"
-            element={(
-              <RouteGuard requiresAuth={false}>
-                <RegisterPage />
-              </RouteGuard>
-            )}
-          />
-          <Route
-            path="/forgot-password"
-            element={(
-              <RouteGuard requiresAuth={false}>
-                <ForgotPasswordPage />
-              </RouteGuard>
-            )}
-          />
-          <Route
-            path="/dashboard"
-            element={(
-              <RouteGuard requiresAuth>
-                <Dashboard />
-              </RouteGuard>
-            )}
-          />
-          <Route
-            path="/briefing/:caseId"
-            element={(
-              <RouteGuard requiresAuth>
-                <BriefingPage />
-              </RouteGuard>
-            )}
-          />
-          <Route
-            path="/game/:caseId"
-            element={(
-              <RouteGuard requiresAuth>
-                <GamePage />
-              </RouteGuard>
-            )}
-          />
-        </Routes>
-      </Router>
+      <CaseStreamProvider>
+        <Router>
+          <Routes>
+            <Route
+              path="/"
+              element={(
+                <RouteGuard requiresAuth={false}>
+                  <LoginPage />
+                </RouteGuard>
+              )}
+            />
+            <Route
+              path="/register"
+              element={(
+                <RouteGuard requiresAuth={false}>
+                  <RegisterPage />
+                </RouteGuard>
+              )}
+            />
+            <Route
+              path="/forgot-password"
+              element={(
+                <RouteGuard requiresAuth={false}>
+                  <ForgotPasswordPage />
+                </RouteGuard>
+              )}
+            />
+            <Route
+              path="/dashboard"
+              element={(
+                <RouteGuard requiresAuth>
+                  <Dashboard />
+                </RouteGuard>
+              )}
+            />
+            <Route
+              path="/briefing/:caseId"
+              element={(
+                <RouteGuard requiresAuth>
+                  <BriefingPage />
+                </RouteGuard>
+              )}
+            />
+            <Route
+              path="/game/:caseId"
+              element={(
+                <RouteGuard requiresAuth>
+                  <GamePage />
+                </RouteGuard>
+              )}
+            />
+          </Routes>
+        </Router>
+      </CaseStreamProvider>
     </AuthProvider>
   );
 }

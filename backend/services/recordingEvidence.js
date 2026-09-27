@@ -18,7 +18,7 @@
 import {
   namesAreValid, parseAiJson, resolveGender, HEBREW_REGISTER, buildGenderDialogueNote, runHebrewQa,
 } from './evidenceBlueprint.js';
-import { generateDialogueAudio } from './elevenLabsTts.js';
+import { generateDialogueAudio } from './dialogueAudio.js';
 
 const DIFFICULTY_GUIDANCE = {
   easy: {

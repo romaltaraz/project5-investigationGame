@@ -93,19 +93,29 @@ export const casesAPI = {
   // קבלת תיק ספציפי עם היסטוריית שיחה
   getById: (caseId) => request(`/api/cases/${caseId}`),
 
-  // יצירת תיק חדש
+  // יצירת תיק חדש. הבקשה חוזרת מיד (202) עם התיק במצב 'generating' -
+  // כל היצירה הכבדה רצה ברקע בשרת, וההתקדמות מגיעה דרך פיד ה-SSE (streamUrl).
+  // ה-timeout כאן מכסה רק את הזמן להירשם לתור, לא את משך היצירה.
   generate: (difficulty, commanderPersonality) =>
     request('/api/cases/generate', {
       method: 'POST',
       body: JSON.stringify({ difficulty, commanderPersonality }),
-      timeoutMs: 45000,
+      timeoutMs: 20000,
     }),
+
+  // מחיקת תיק (משמש ל"נסה שוב" על תיק שנכשל, ולניקוי כללי)
+  remove: (caseId) =>
+    request(`/api/cases/${caseId}`, { method: 'DELETE' }),
 
   updateNotes: (caseId, investigatorNotes) =>
     request(`/api/cases/${caseId}/notes`, {
       method: 'PUT',
       body: JSON.stringify({ investigatorNotes }),
     }),
+
+  // כתובת פיד ה-SSE של שינויי התיקים. EventSource לא יכול לשלוח כותרת
+  // Authorization, ולכן הטוקן עובר ב-query (ה-middleware מקבל גם ?token=).
+  streamUrl: (token) => `${BASE_URL}/api/cases/stream?token=${encodeURIComponent(token || '')}`,
 };
 
 // INVESTIGATION

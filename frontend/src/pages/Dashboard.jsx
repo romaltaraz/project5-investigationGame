@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useCaseStream } from '../context/CaseStreamContext';
 import { casesAPI } from '../services/api.js';
 import '../styles/components/dashboard.css';
 import DashboardMapHero from '../components/DashboardMapHero';
@@ -19,6 +20,7 @@ const PERSONALITIES = [
 ];
 
 const STATUS_LABELS = {
+  generating: 'בהכנה',
   active: 'בחקירה',
   solved: 'נפתר',
   failed: 'נכשל',
@@ -38,8 +40,10 @@ export default function Dashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const [cases, setCases] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // התיקים מגיעים מפיד ה-SSE (CaseStreamProvider) - נשארים מסונכרנים עם MongoDB
+  // בזמן אמת, כולל שינויים שנעשו ישירות ב-Compass. אין כאן יותר fetch/polling.
+  const { cases, connected, ready } = useCaseStream();
+
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [difficulty, setDifficulty] = useState('medium');
@@ -47,36 +51,16 @@ export default function Dashboard() {
   const [generating, setGenerating] = useState(false);
 
   // תיק בסטטוס 'generating' תופס סלוט (כמו 'active') אבל אינו ניתן למשחק עדיין,
-  // ולכן לא מוצג כתיק פעיל וגם לא כתיק סגור/ארכיון.
+  // ולכן מוצג בנפרד עם תמונת הטעינה, לא כתיק פעיל וגם לא כתיק סגור/ארכיון.
   const activeCases = cases.filter((item) => item.status === 'active');
+  const generatingCases = cases.filter((item) => item.status === 'generating');
   const occupiedSlots = cases.filter((item) => item.status === 'active' || item.status === 'generating').length;
-  const closedCases = cases.filter((item) => item.status !== 'active' && item.status !== 'generating').slice(0, 3);
+  const closedCases = cases.filter((item) => item.status === 'solved' || item.status === 'failed').slice(0, 4);
   const openSlots = Math.max(0, 3 - occupiedSlots);
-
-  useEffect(() => {
-    fetchCases();
-  }, []);
 
   const handleUnauthorized = () => {
     logout();
     navigate('/');
-  };
-
-  const fetchCases = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const data = await casesAPI.getAll();
-      setCases(data.cases || []);
-    } catch (err) {
-      if (err.status === 401 || err.status === 403) {
-        handleUnauthorized();
-        return;
-      }
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
   };
 
   const createNewCase = async () => {
@@ -85,8 +69,12 @@ export default function Dashboard() {
       return;
     }
     setGenerating(true);
+    setError('');
     try {
+      // חוזר מיד עם התיק במצב 'generating'. מעבר לתדריך שמציג את תמונת הטעינה
+      // ומחליף אותה לבד ברגע שהסטטוס הופך ל-'active' (דרך פיד ה-SSE).
       const result = await casesAPI.generate(difficulty, commanderPersonality);
+      setShowModal(false);
       navigate(`/briefing/${result.case.id}`);
     } catch (err) {
       if (err.status === 401 || err.status === 403) {
@@ -96,8 +84,22 @@ export default function Dashboard() {
       setError(err.message);
     } finally {
       setGenerating(false);
-      setShowModal(false);
     }
+  };
+
+  const retryFailedCase = async (caseId) => {
+    setError('');
+    try {
+      await casesAPI.remove(caseId);
+    } catch (err) {
+      if (err.status === 401 || err.status === 403) {
+        handleUnauthorized();
+        return;
+      }
+      setError(err.message);
+      return;
+    }
+    setShowModal(true);
   };
 
   const handleLogout = () => {
@@ -113,6 +115,9 @@ export default function Dashboard() {
           <p className="dashboard-subtitle">ברוך הבא, סוכן {user?.name || user?.username}</p>
         </div>
         <div className="header-actions">
+          <span className={`sync-pill ${connected ? 'is-live' : 'is-offline'}`}>
+            {connected ? 'סנכרון חי' : 'מתחבר מחדש…'}
+          </span>
           <button
             onClick={() => setShowModal(true)}
             className="new-case-btn"
@@ -194,13 +199,33 @@ export default function Dashboard() {
         <p>{openSlots > 0 ? `אפשר לפתוח עוד ${openSlots} תיקים.` : 'כדי לפתוח תיק חדש צריך לסגור תיק קיים.'}</p>
       </div>
 
-      {loading ? (
+      {generatingCases.length > 0 && (
+        <div className="cases-grid">
+          {generatingCases.map((item) => (
+            <div key={getCaseId(item)} className="case-card case-card--generating">
+              <div className="case-card__top">
+                <span className="case-status status-generating">{STATUS_LABELS.generating}</span>
+                <span className="case-difficulty">{DIFFICULTY_LABELS[item.difficulty] || item.difficulty}</span>
+              </div>
+              <InvestigationLoader label="בונה את תיק החקירה… זה יכול לקחת כמה דקות." />
+              <p className="case-brief">התיק ייפתח אוטומטית ברגע שהיצירה תסתיים. אפשר להמתין כאן או להיכנס לתדריך.</p>
+              <button className="case-link-btn" onClick={() => navigate(`/briefing/${getCaseId(item)}`)}>
+                מעבר לתדריך
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!ready ? (
         <InvestigationLoader label="טוען תיקים..." />
       ) : activeCases.length === 0 ? (
-        <div className="empty-state">
-          <p>אין תיקים פעילים</p>
-          <p>פתח תיק חדש כדי להתחיל חקירה</p>
-        </div>
+        generatingCases.length === 0 && (
+          <div className="empty-state">
+            <p>אין תיקים פעילים</p>
+            <p>פתח תיק חדש כדי להתחיל חקירה</p>
+          </div>
+        )
       ) : (
         <div className="cases-grid">
           {activeCases.map((item) => (
@@ -239,6 +264,11 @@ export default function Dashboard() {
                   <span className={`case-status status-${item.status}`}>{STATUS_LABELS[item.status]}</span>
                 </div>
                 <p>{trimBrief(item.commanderBrief)}</p>
+                {item.status === 'failed' && (
+                  <button className="case-link-btn" onClick={() => retryFailedCase(getCaseId(item))}>
+                    נסה שוב
+                  </button>
+                )}
               </div>
             ))}
           </div>

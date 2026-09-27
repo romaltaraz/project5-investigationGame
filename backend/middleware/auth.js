@@ -5,10 +5,20 @@ dotenv.config();
 
 export const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+
+  // EventSource (the SSE case feed) cannot set an Authorization header, so the
+  // JWT may also arrive as ?token=... on the query string. Header wins.
+  let token = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (typeof req.query?.token === 'string' && req.query.token) {
+    token = req.query.token;
+  }
+
+  if (!token) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
-  const token = authHeader.split(' ')[1];
+
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
 

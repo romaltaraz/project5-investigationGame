@@ -485,12 +485,30 @@ const generateAssetForEvidence = async ({ caseId, caseName, briefingDetails, sus
   };
 };
 
-export const generateEvidenceAssets = async ({ caseId, caseName, briefingDetails = {}, suspects = [], evidence = [], difficulty, solution }) => {
+// attemptIndexes: Set<number> | null. null (default) attempts every item —
+// unchanged behavior for the POST /generate call site, which always wants
+// the full case generated. When a Set is given (see ensureCaseEvidenceAssets
+// in routes/cases.js), only those positions are actually (re)generated; every
+// other item is passed through completely untouched. Crucially, `evidence`
+// is always the FULL original array here — items are never filtered out
+// before this call — so the loop's own `index` is always the item's true
+// original position, which is what buildImagePrompt's FLUX seed and the
+// `${index+1}-...` filename/log numbering key off. Filtering the input array
+// instead (passing only the items needing an attempt) would silently shift
+// that index for retried items - this is what keeps it stable.
+export const generateEvidenceAssets = async ({
+  caseId, caseName, briefingDetails = {}, suspects = [], evidence = [], difficulty, solution, attemptIndexes = null,
+}) => {
   await ensureDirectory(GENERATED_EVIDENCE_ROOT);
 
   const generatedEvidence = [];
 
   for (let index = 0; index < evidence.length; index += 1) {
+    if (attemptIndexes && !attemptIndexes.has(index)) {
+      generatedEvidence.push(evidence[index]);
+      continue;
+    }
+
     try {
       const generated = await generateAssetForEvidence({
         caseId,

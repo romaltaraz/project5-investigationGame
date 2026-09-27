@@ -60,10 +60,10 @@ const DIMS = {
 const CAPTURE_PROFILES = {
   cctv: {
     id: 'cctv',
-    camera: 'Image grabbed from a fixed CCTV security camera, mounted high on a wall or ceiling corner, wide-angle lens.',
-    framing: 'Wide static field of view shot from a high angle looking down, mild fisheye-style edge distortion, subjects appear small and off-center rather than composed in the frame.',
-    lighting: 'Flat institutional lighting (fluorescent/sodium), harsh overexposed patches near light fixtures and dim underexposed corners, low dynamic range.',
-    quality: 'Low-resolution video-grab quality, visible compression blocking and interlacing artifacts, muted desaturated color, slight motion smear on anything moving.',
+    camera: 'Image grabbed from a fixed CCTV security camera bolted high in a wall or ceiling corner, wide-angle lens, the same unchanging viewpoint it always has.',
+    framing: 'Wide static field of view looking down across the whole room from the high mount, slight wide-angle stretching toward the edges, anything of interest sits small and off-center rather than composed in the frame.',
+    lighting: 'Flat institutional lighting (fluorescent/sodium) that is simply whatever the room normally has on, harsh overexposed patches near the fixtures and dim underexposed corners, low dynamic range.',
+    quality: 'Low-resolution video-grab quality, visible compression blocking and mild interlacing, muted desaturated color, slight smear on anything that moved.',
     depthOfField: 'Deep focus, everything in the frame is in focus, no artistic blur.',
     dims: DIMS.landscape43,
   },
@@ -89,7 +89,7 @@ const CAPTURE_PROFILES = {
     id: 'phone_night',
     camera: 'Handheld smartphone photo taken at night without flash, relying on computational low-light processing.',
     framing: 'Casual handheld framing, natural imperfect composition, not centered or staged.',
-    lighting: 'Mixed practical light sources (streetlight, window glow, screen light) with uneven color temperature, deep shadows away from the light sources.',
+    lighting: 'Only the light actually present in the place — a wall light, a doorway, a single lamp — dim and uneven, with deep shadows away from it.',
     quality: 'Visible high-ISO sensor noise/grain, slight smearing from computational noise reduction, faint motion blur from a long handheld exposure.',
     depthOfField: 'Shallow phone-sensor depth of field only on very close subjects, otherwise mostly in focus but soft from noise reduction.',
     dims: DIMS.portraitPhone,
@@ -98,8 +98,8 @@ const CAPTURE_PROFILES = {
     id: 'night_ambient',
     camera: 'Photo of an empty or near-empty scene at night, taken by a handheld camera or phone left to a longer exposure, no people in frame close enough to matter.',
     framing: 'Wide environmental framing showing the space itself, natural unstaged perspective at normal standing height.',
-    lighting: 'Available night lighting only — streetlights, interior spill, signage — with real pools of light and darkness, no artificial fill.',
-    quality: 'Visible grain in the shadows, slight chromatic noise, realistic long-exposure light trails only if a moving light source is plausible.',
+    lighting: 'Available night lighting only — interior lights, or a single outside light — with real pools of light and darkness, no artificial fill.',
+    quality: 'Visible grain in the shadows, slight chromatic noise, a little softness from a longer hand-held exposure.',
     depthOfField: 'Normal deep-ish focus typical of a wide night shot, background readable but not crisp.',
     dims: DIMS.landscapeWide,
   },
@@ -150,6 +150,67 @@ const CAPTURE_PROFILES = {
   },
 };
 
+// One plain lead sentence per profile: WHAT this image is and why it exists.
+// It goes FIRST in the built prompt (before any camera mechanics) so the
+// model commits to "a real photo taken for a practical reason" instead of
+// "a cinematic image representing a scene". Same ids as CAPTURE_PROFILES.
+const CAPTURE_LEAD = {
+  cctv: 'A still frame from a fixed indoor security camera — a routine surveillance capture, not a composed photograph.',
+  telephoto: 'A photo taken quietly from a distance by someone watching, without the subject aware of the camera.',
+  phone_flash: 'A quick phone snapshot grabbed in the dark with the flash on.',
+  phone_night: 'A casual hand-held phone photo taken at night, grabbed quickly rather than set up.',
+  night_ambient: 'A plain record shot of a mostly empty place at night, taken just to show how it looked.',
+  phone_candid_crowd: 'An offhand phone snapshot taken in a busy social setting.',
+  phone_snapshot: 'An ordinary phone snapshot of whatever was in front of the person.',
+  documentary_closeup: 'A plain close-up photo taken to document one specific object.',
+  documentary_outdoor: 'A plain photo taken to document an outdoor location as it looked.',
+  documentary_indoor: 'A plain photo taken to document an indoor location as it looked.',
+};
+
+const resolveCaptureLead = (id) => CAPTURE_LEAD[id] || CAPTURE_LEAD.documentary_indoor;
+
+// ── Deterministic Hebrew→English environment anchor ─────────────────────
+// The evidence blueprint's scene fields (location / primaryClue /
+// visualDetails / description) are authored in Hebrew (see
+// caseFactory.js buildEvidencePrompt), and FLUX.1-dev's text encoders do
+// not understand Hebrew — so those fields currently reach the model as
+// noise. Full deterministic translation of free Hebrew prose is not
+// possible here without a translation service or a second AI call (both
+// explicitly out of scope), BUT the single most important structural fact
+// for the image — "what kind of place is this" — can be recovered from a
+// small, high-precision keyword table, in exactly the same spirit as the
+// SECURITY/OBSERVATION keyword tables above. Since `visualPromptEn` landed
+// (see the notes at the end of this file) this is the FALLBACK path for
+// photo evidence that has no English description — plus a light reinforcement
+// of the environment even when it does. Order matters — first match wins.
+const ENV_ANCHORS = [
+  [/ספריי?|חדר קריאה|אולם קריאה|חדר עיון/, 'an indoor library / reading room, with bookshelves, reading tables and chairs'],
+  [/חדר ישיבות/, 'an indoor meeting room built around one large table'],
+  [/משרד|לשכה|תא עבודה/, 'an ordinary indoor office with desks, chairs and office equipment'],
+  [/מסדרון|פרוזדור/, 'a plain interior corridor'],
+  [/חדר מדרגות|גרם מדרגות/, 'an indoor concrete stairwell'],
+  [/מעלית/, 'the inside of an elevator car'],
+  [/חניון|מגרש חנייה|מרתף חניה/, 'a parking garage'],
+  [/מטבח/, 'a kitchen'],
+  [/מעבדה/, 'a laboratory room with work benches'],
+  [/מחסן|מרתף/, 'a storage room / warehouse space'],
+  [/לובי|דלפק קבלה|רחבת כניסה/, 'a building lobby / reception area'],
+  [/כיתה|אולם הרצאות/, 'a classroom / lecture room'],
+  [/מרפאה|חדר טיפול|בית חולים|מיון/, 'a clinic / hospital treatment room'],
+  [/מועדון|פאב|בר לילה/, 'a bar / nightclub interior'],
+  [/חדר שינה/, 'an ordinary bedroom'],
+  [/סלון|מטבחון|דירה/, 'an ordinary residential interior'],
+  [/רחוב|מדרכה|סמטה|חניה חיצונית/, 'an outdoor street / pavement'],
+  [/גינה|חצר|פארק/, 'an outdoor yard / garden'],
+];
+
+const resolveEnvAnchor = (haystack = '') => {
+  for (const [pattern, phrase] of ENV_ANCHORS) {
+    if (pattern.test(haystack)) return phrase;
+  }
+  return '';
+};
+
 // "מעקב"/"אבטחה" alone are ambiguous in Hebrew (can mean "video surveillance"
 // just as easily as "tailing a person" or "security" in the abstract) — CCTV
 // is only inferred when an actual camera is named, so a phrase like "מעקב
@@ -179,6 +240,21 @@ const isNightScene = (time, haystack) => {
   const hour = parseInt(`${time || ''}`.split(':')[0], 10);
   if (!Number.isNaN(hour) && (hour >= 22 || hour < 6)) return true;
   return NIGHT_KEYWORDS.test(haystack);
+};
+
+// Deterministic English time-of-day + lighting line from the HH:MM string
+// (which is already language-neutral). Used instead of relying on the
+// Hebrew scene text to carry the "it was the middle of the night" fact.
+// Deliberately plain — ordinary available light, never "moody" or "golden".
+const resolveTimeContext = (time) => {
+  const raw = `${time || ''}`.trim();
+  const hour = parseInt(raw.split(':')[0], 10);
+  if (Number.isNaN(hour)) return '';
+  const stamp = /^\d{1,2}:\d{2}$/.test(raw) ? `roughly ${raw}, ` : '';
+  if (hour >= 22 || hour <= 4) return `Time: ${stamp}the middle of the night — only the dim, uneven light the place leaves on overnight, with genuinely dark areas, no daylight.`;
+  if (hour >= 5 && hour <= 7) return `Time: ${stamp}early morning before full daylight — weak grey light, still dim.`;
+  if (hour >= 8 && hour <= 17) return `Time: ${stamp}daytime — ordinary, fairly even natural light.`;
+  return `Time: ${stamp}evening — fading daylight or the first interior lights, low but not pitch dark.`;
 };
 
 // Semantic, deterministic capture-source selection — never random. Order
@@ -218,34 +294,61 @@ const resolveCaptureProfile = (evidence = {}, { location = '', time = '', partic
 // DIFFICULTY_GUIDANCE idiom in recordingEvidence.js, scoped to framing
 // instead of dialogue.
 const CLUE_VISIBILITY_BY_DIFFICULTY = {
-  easy: 'This detail should be clearly visible and easy to notice at a glance — well-lit and unobstructed in the frame.',
-  medium: 'This detail should be present but not the obvious focal point of the shot — easy to miss on a first glance, clear on closer inspection.',
-  hard: 'This detail should be subtle — partially obscured, near the edge of the frame, in shadow, or small relative to the scene — but still genuinely identifiable on close inspection, never removed or illegible.',
+  easy: 'Keep this detail clearly visible and easy to notice at a glance — well lit, in focus, unobstructed.',
+  medium: 'Let this detail sit naturally in the scene rather than being spotlighted as the focal point — easy to overlook on a quick glance, but fully visible, in focus and unmistakable on a proper look.',
+  hard: 'Keep this detail understated and not the first thing the eye lands on — worked naturally into the scene, not highlighted — but still fully visible, in focus and clearly identifiable on a careful look. Never hidden, cropped out, blurred, or too small to make out.',
 };
 
 const resolveClueVisibility = (difficulty) => CLUE_VISIBILITY_BY_DIFFICULTY[difficulty] || CLUE_VISIBILITY_BY_DIFFICULTY.medium;
 
-const NEGATIVE_CONSTRAINTS = 'No readable text, no captions, no subtitles, no watermarks, no logos, no on-screen UI, no fake timestamp overlays, no labels or annotations anywhere in the image. No cinematic color grading, no teal-and-orange grading, no dramatic movie lighting, no illustration, no anime, no fantasy elements, no impossible camera angles, no overly clean or staged environment, no perfectly centered "movie poster" composition.';
+// ── Negative constraints, split by intent ──────────────────────────────
+// ALWAYS_NEGATIVE kills the "AI cinematic image" tells and fake overlays.
+// The readable-text rule is SEPARATE and conditional (resolveTextPolicy):
+// some evidence — a badge, a document, a label, a plate — only works if the
+// physical object is allowed to carry its own text. We forbid invented
+// UI/caption/watermark text always, but forbid ALL text only when nothing
+// in the evidence implies a physical object that legitimately has text.
+const ALWAYS_NEGATIVE = 'Not an illustration, render, painting or anime. No cinematic or teal-and-orange color grading, no lens flare, no vignette, no dramatic or glamorous lighting, no shallow-focus bokeh, no posed models, no centered movie-poster framing. No added interface, watermark, logo, caption or fake burnt-in timestamp overlay.';
+
+const REALISM_BLOCK = 'Look: a real photo already sitting in a case file — ordinary phone or camera quality, plain imperfect framing, slightly uneven exposure, unremarkable and a little dull, natural colors.';
+
+// Signals that the evidence depends on a physical object that legitimately
+// carries text/numbers (Hebrew + English). Matched against the same
+// classification haystack used for capture-profile selection.
+const PHYSICAL_TEXT_KEYWORDS = /תג|תעוד|תווית|שלט|מסמך|חשבונית|קבל[הת]|פתק|מכתב|רישום|לוחית|לוח מספר|מספר רישוי|רישוי|טופס|כרטיס|דרכון|רישיו|ברקוד|חתימה|חותמת|כיתוב|כתוב|מדבק|badge|id card|identification|licen[sc]e|passport|\bdocument\b|invoice|receipt|\bnote\b|\bletter\b|\blabel\b|\bsign\b|number ?plate|license ?plate|\bform\b|\bticket\b|barcode|serial|signature|\bstamp\b|handwrit/i;
+
+const resolveTextPolicy = (haystack = '') => (PHYSICAL_TEXT_KEYWORDS.test(haystack)
+  ? 'Text may appear only on the real objects that naturally carry it (a badge, ID card, document, label, sign); keep it minimal and plausible, and none anywhere else.'
+  : 'No readable text, lettering or numbers anywhere in the image.');
 
 // ── Prompt construction ──────────────────────────────────────────────────
 // Character consistency: a participant's appearance is looked up from the
 // suspect's OWN stored appearanceProfile (established once at case-generation
-// time) and never re-derived or reworded here — same name, same attributes,
-// every single evidence item.
+// time) and never re-derived or reworded here — same attributes, every
+// single evidence item. Rendered as natural English rather than a raw
+// comma-attribute dump so the model reads it as a description of a person.
 
-const describeAppearance = (name, appearanceProfile = {}) => {
-  const parts = [
-    appearanceProfile.age ? `${appearanceProfile.age}-year-old` : '',
-    appearanceProfile.gender || '',
-    appearanceProfile.hair || '',
-    appearanceProfile.eyes ? `${appearanceProfile.eyes} eyes` : '',
-    appearanceProfile.skinTone ? `${appearanceProfile.skinTone} skin tone` : '',
-    appearanceProfile.bodyType || '',
-    appearanceProfile.clothingStyle ? `wearing ${appearanceProfile.clothingStyle}` : '',
-    ...(Array.isArray(appearanceProfile.distinctiveFeatures) ? appearanceProfile.distinctiveFeatures : []),
+const GENDER_WORD = { female: 'woman', male: 'man' };
+
+const describeAppearance = (appearanceProfile = {}) => {
+  const profile = appearanceProfile || {};
+  const hasAny = ['age', 'gender', 'hair', 'eyes', 'skinTone', 'bodyType', 'clothingStyle']
+    .some((key) => profile[key])
+    || (Array.isArray(profile.distinctiveFeatures) && profile.distinctiveFeatures.length > 0);
+  if (!hasAny) return 'an adult, ordinary and unremarkable in appearance, plainly dressed';
+
+  const who = GENDER_WORD[`${profile.gender || ''}`.toLowerCase()] || 'person';
+  const lead = profile.age ? `a ${who}, about ${profile.age} years old` : `a ${who}`;
+  const traits = [
+    profile.hair || '',
+    profile.eyes ? `${profile.eyes} eyes` : '',
+    profile.skinTone ? `${profile.skinTone} skin` : '',
+    profile.bodyType || '',
+    profile.clothingStyle ? `wearing ${profile.clothingStyle}` : '',
+    ...(Array.isArray(profile.distinctiveFeatures) ? profile.distinctiveFeatures : []),
   ].filter(Boolean);
 
-  return parts.length ? `${name} (${parts.join(', ')})` : name;
+  return traits.length ? `${lead}, with ${traits.join(', ')}` : lead;
 };
 
 // context: { caseId, index, caseName, briefingDetails, difficulty } — caseId
@@ -262,42 +365,109 @@ export const buildImagePrompt = (evidence = {}, suspects = [], context = {}) => 
   const time = evidence.timeline?.time || briefingDetails?.incidentTime || '';
   const participants = Array.isArray(evidence.participants) ? evidence.participants : [];
 
-  const subjects = participants
+  // One appearance block per participant, in order — pulled verbatim from
+  // each suspect's stored appearanceProfile, never reworded per evidence.
+  const people = participants
     .map((name) => {
       const suspect = suspects.find((s) => `${s?.name || ''}`.trim() === `${name || ''}`.trim());
-      return describeAppearance(name, suspect?.appearanceProfile);
+      return describeAppearance(suspect?.appearanceProfile);
     })
     .filter(Boolean);
 
   const profile = resolveCaptureProfile(evidence, { location, time, participants });
+  const timeContext = resolveTimeContext(time);
 
-  const sceneParts = [
-    location ? `Scene: ${location}${time ? `, ${time}` : ''}.` : '',
-    subjects.length ? `Subjects present: ${subjects.join('; ')}.` : '',
-    Array.isArray(evidence.visualDetails) && evidence.visualDetails.length
-      ? `Visible in the scene: ${evidence.visualDetails.join(', ')}.`
-      : '',
-    // primaryClue is explicitly listed as a source-of-truth input — used only
-    // to ground the scene visually, never as literal on-image text (the "no
-    // readable text" negative constraint below prevents it from being
-    // rendered as a caption). secondaryClue is deliberately NOT included
-    // here: it is often a narrative/investigation-logic detail (e.g. "she's
-    // been avoiding this topic"), not a visual fact, same reasoning that
-    // already keeps `purpose` out of the rendered scene.
-    evidence.primaryClue
-      ? `Key visual detail the photo must depict (never as on-image text): ${evidence.primaryClue}. ${resolveClueVisibility(difficulty)}`
-      : '',
+  // visualPromptEn (photo-evidence blueprint field): a 1–3 sentence English
+  // factual description of what the photo shows, produced by the SAME
+  // case-generation LLM call that emits the Hebrew fields (no extra call, no
+  // translation model — see caseFactory.js buildEvidencePrompt). When it is
+  // present it is the PRIMARY semantic scene description; the Hebrew
+  // `primaryClue` / `visualDetails` (which FLUX cannot reliably ground) are
+  // then dropped from the prompt rather than duplicated. When it is absent
+  // (older cases, or a generation that omitted it) the prompt falls back to
+  // exactly the previous behaviour: Hebrew primaryClue + visualDetails +
+  // the deterministic environment anchor.
+  const visualPromptEn = `${evidence.visualPromptEn || ''}`.trim();
+  const hasVisualEn = visualPromptEn.length > 0;
+
+  // Text-policy / environment detection also sees the English description so
+  // an ID badge / document named only in visualPromptEn still gets the
+  // right text rule and environment class.
+  const haystack = buildClassificationHaystack(evidence);
+  const semanticHaystack = hasVisualEn ? `${haystack} ${visualPromptEn}` : haystack;
+  const envAnchor = resolveEnvAnchor(`${location} ${semanticHaystack}`);
+
+  // The Hebrew blueprint fields are free prose and often end with their own
+  // full stop — trim it so it doesn't collide with the sentence we wrap
+  // them in.
+  const cleanLocation = `${location}`.replace(/\s*[.。]\s*$/, '').trim();
+  const cleanPrimaryClue = `${evidence.primaryClue || ''}`.replace(/\s*[.。]\s*$/, '').trim();
+
+  // 1. WHAT is happening — kind of photo + how many people are in it.
+  const shotType = people.length >= 2
+    ? 'Two people are together in one place; show both of them clearly and show that they are interacting.'
+    : people.length === 1
+      ? 'One person is present in the place; show them clearly.'
+      : 'No people are anywhere in the frame — the subject is the place itself and one physical detail in it.';
+
+  // 2. WHAT WAS CAPTURED — the English scene description, verbatim, as the
+  //    load-bearing semantic content of the whole prompt.
+  const scenePart = hasVisualEn ? visualPromptEn : '';
+
+  // 3. WHO — explicit per-person blocks (skipped when there are no people).
+  const peopleBlock = people.length
+    ? people.map((p, i) => `Person ${i + 1}: ${p}.`).join(' ')
+    : '';
+
+  // 4. WHERE — the Hebrew sub-location verbatim, plus a deterministic
+  //    English environment class so the setting still lands for FLUX. Kept
+  //    even when visualPromptEn is present: it is short, and it reinforces
+  //    rather than restates the environment.
+  const whereParts = [
+    cleanLocation ? `Location: ${cleanLocation}.` : '',
+    envAnchor ? `The place is ${envAnchor}.` : '',
   ].filter(Boolean);
 
+  // 5. PRIMARY CLUE — always physically present and identifiable in frame;
+  //    difficulty only tunes how prominent. With visualPromptEn present the
+  //    clue is already named there in English, so this only reinforces its
+  //    prominence instead of re-injecting the Hebrew `primaryClue` (which is
+  //    the logical/investigative clue and can carry conclusions — those must
+  //    never reach the image). secondaryClue / purpose stay out entirely.
+  const cluePart = hasVisualEn
+    ? `The primary physical clue in that description is the single most important thing in the photograph: a real object in the scene, plainly visible and identifiable, never rendered as text over the image. ${resolveClueVisibility(difficulty)}`
+    : (cleanPrimaryClue
+      ? `The whole reason this photo exists, and the thing it must clearly show: ${cleanPrimaryClue}. It is a real physical object or detail in the scene, plainly visible — never shown as text over the image. ${resolveClueVisibility(difficulty)}`
+      : '');
+
+  // 6. SUPPORTING VISIBLE DETAIL — only the Hebrew visualDetails, and only
+  //    as a fallback: when visualPromptEn exists it already covers what is
+  //    visible, so this is skipped to avoid piling untranslatable text on.
+  const detailPart = (!hasVisualEn && Array.isArray(evidence.visualDetails) && evidence.visualDetails.length)
+    ? `Also visible: ${evidence.visualDetails.join('; ')}.`
+    : '';
+
+  // Content-first ordering: what / what-was-captured / who / where / clue /
+  // detail / time come BEFORE the capture mechanics and the realism/negative
+  // language, so the evidence drives the image and the photographic style
+  // only supports it. Only the three most defining capture-profile fields
+  // are emitted (camera, framing, quality) — the profile's `lighting` is
+  // already covered by the time-of-day line and `depthOfField` by the
+  // realism line — so the style language stays a supporting clause instead
+  // of swamping the evidence.
   const prompt = [
-    profile.camera,
-    profile.framing,
-    profile.lighting,
-    profile.quality,
-    profile.depthOfField,
-    ...sceneParts,
-    'Photorealistic, unstaged, real-world photograph — not concept art, not a movie still.',
-    NEGATIVE_CONSTRAINTS,
+    resolveCaptureLead(profile.id), // 1  what the photograph is
+    shotType, // 1
+    scenePart, // 2  visualPromptEn
+    peopleBlock, // 3  people / appearance
+    ...whereParts, // 4  location / environment
+    cluePart, // 5  primary visual clue
+    detailPart, // 6  visualDetails (fallback only)
+    timeContext, // 7  time
+    `Capture: ${profile.camera} ${profile.framing} ${profile.quality}`, // 8  capture method
+    REALISM_BLOCK, // 9  photorealism
+    ALWAYS_NEGATIVE, // 10 negative constraints
+    resolveTextPolicy(semanticHaystack), // 10
   ].filter(Boolean).join(' ');
 
   // Deterministic per-item seed instead of a fixed 0 for every image: same
@@ -453,3 +623,23 @@ export const generateFluxImage = async (prompt, overrides = {}) => {
     extension: 'jpg',
   };
 };
+
+// ── Grounding the scene: visualPromptEn, with a deterministic fallback ──
+// The evidence blueprint's scene fields (`location` / `primaryClue` /
+// `visualDetails`) are authored in Hebrew, and the current pipeline was
+// observed NOT to reliably ground that Hebrew content into the right visual
+// scene (a CCTV/library/badge item generated as a neon street portrait).
+//
+// Primary fix: the photo blueprint now carries `visualPromptEn` — a 1–3
+// sentence English factual description of what the photo shows, emitted by
+// the SAME case-generation LLM call that produces the Hebrew fields (no
+// extra call, no translation model — see caseFactory.js buildEvidencePrompt).
+// When present it is the load-bearing semantic content of the prompt
+// (section 2) and the Hebrew primaryClue/visualDetails are dropped rather
+// than duplicated.
+//
+// Fallback (older cases, or a generation that omitted the field): the
+// prompt still works exactly as before — Hebrew primaryClue + visualDetails
+// + the coarse deterministic environment class from ENV_ANCHORS, plus the
+// facts that are language-neutral anyway (people count, HH:MM → lighting).
+// `hasVisualEn` in buildImagePrompt is the single switch between the two.

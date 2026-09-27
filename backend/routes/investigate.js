@@ -5,6 +5,7 @@ import User from '../models/User.js';
 import { authenticateToken } from '../middleware/auth.js';
 import OpenAI from 'openai';
 import { resolveGender } from '../services/evidenceBlueprint.js';
+import { NVIDIA_TEXT_MODEL } from '../caseFactory.js';
 
 const router = express.Router();
 const openai = new OpenAI({
@@ -250,7 +251,7 @@ router.post('/:id/ask', authenticateToken, async (req, res) => {
     });
 
     const aiResponse = await openai.chat.completions.create({
-      model: 'meta/llama-3.3-70b-instruct',
+      model: NVIDIA_TEXT_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
         ...interaction.messages,
@@ -309,7 +310,7 @@ router.post('/:id/consult', authenticateToken, async (req, res) => {
 ענה בעברית בלבד.`;
 
     const aiResponse = await openai.chat.completions.create({
-      model: 'meta/llama-3.3-70b-instruct',
+      model: NVIDIA_TEXT_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
         ...interaction.messages,

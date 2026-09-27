@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useCaseStream } from '../context/CaseStreamContext';
 import { BASE_URL, casesAPI, investigateAPI } from '../services/api.js';
 import { buildCaseNotebook } from '../utils/investigationNotebook.js';
 import InvestigationLoader from '../components/InvestigationLoader';
@@ -222,10 +223,16 @@ export default function GamePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { logout } = useAuth();
+  const { getCase } = useCaseStream();
 
   const [caseDoc, setCaseDoc] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Live view from the shared SSE feed - keeps status / evidence in sync with
+  // MongoDB (including direct Compass edits) without a page refresh.
+  const liveCase = getCase(caseId);
+  const lastSyncedRef = useRef('');
 
   const [mobileView, setMobileView] = useState('chat');
   const [selectedSuspectName, setSelectedSuspectName] = useState('');
@@ -310,6 +317,8 @@ export default function GamePage() {
         setSelectedSuspectName(initialSuspect.name);
         loadSuspectHistory(data.case, initialSuspect.name);
       }
+
+      lastSyncedRef.current = `${data.case?.status || ''}:${data.case?.updatedAt || ''}`;
     } catch (err) {
       if (err.status === 401 || err.status === 403) {
         handleUnauthorized();
@@ -321,6 +330,28 @@ export default function GamePage() {
       setLoading(false);
     }
   };
+
+  // Surgical refresh when the SSE feed reports this case changed (status flip,
+  // late evidence assets, direct Compass edit). Only replaces caseDoc - never
+  // touches the selected suspect, the open chat, or unsaved notes.
+  const syncCaseDoc = async () => {
+    try {
+      const data = await casesAPI.getById(caseId);
+      setCaseDoc(data.case);
+      lastSyncedRef.current = `${data.case?.status || ''}:${data.case?.updatedAt || ''}`;
+    } catch {
+      /* keep the current view; the next event / reconnect will resync */
+    }
+  };
+
+  useEffect(() => {
+    if (!liveCase) return;
+    const signature = `${liveCase.status || ''}:${liveCase.updatedAt || ''}`;
+    if (lastSyncedRef.current && signature !== lastSyncedRef.current) {
+      lastSyncedRef.current = signature;
+      syncCaseDoc();
+    }
+  }, [liveCase?.status, liveCase?.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveNotes = async () => {
     if (!caseDoc || savingNotes || !notesDirty) return;
@@ -462,6 +493,9 @@ export default function GamePage() {
   };
 
   if (loading) return <InvestigationLoader fullPage label="טוען תיק חקירה..." />;
+  if (caseDoc && caseDoc.status === 'generating') {
+    return <InvestigationLoader fullPage label="התיק עדיין בהכנה… הוא ייפתח אוטומטית כשיהיה מוכן." />;
+  }
   if (error && !caseDoc) return <div className="loading">{error}</div>;
   if (!caseDoc) return <div className="loading">תיק לא נמצא</div>;
 

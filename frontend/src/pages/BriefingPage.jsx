@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useCaseStream } from '../context/CaseStreamContext';
 import { BASE_URL, casesAPI } from '../services/api.js';
 import InvestigationLoader from '../components/InvestigationLoader';
 import '../styles/components/briefing.css';
@@ -136,12 +137,19 @@ export default function BriefingPage() {
   const { caseId } = useParams();
   const navigate = useNavigate();
   const { logout } = useAuth();
+  const { getCase } = useCaseStream();
 
   const [caseDoc, setCaseDoc] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [typedBrief, setTypedBrief] = useState('');
   const [selectedEvidence, setSelectedEvidence] = useState(null);
+
+  // Live view of this case from the shared SSE feed - drives the auto-swap from
+  // the "generating" loader to the finished briefing, and picks up late evidence
+  // images, all without a manual refresh.
+  const liveCase = getCase(caseId);
+  const lastSyncedRef = useRef('');
 
   const briefingDetails = useMemo(
     () => caseDoc?.briefingDetails || (caseDoc ? buildFallbackBriefingDetails(caseDoc) : null),
@@ -205,24 +213,37 @@ export default function BriefingPage() {
     navigate('/');
   };
 
-  const fetchCase = async () => {
-    setLoading(true);
+  const fetchCase = async ({ soft = false } = {}) => {
+    if (!soft) setLoading(true);
     setError('');
 
     try {
       const data = await casesAPI.getById(caseId);
       setCaseDoc(data.case);
+      lastSyncedRef.current = `${data.case?.status || ''}:${data.case?.updatedAt || ''}`;
     } catch (err) {
       if (err.status === 401 || err.status === 403) {
         handleUnauthorized();
         return;
       }
 
-      setError(err.message || 'לא הצלחנו לטעון את פרטי התיק.');
+      if (!soft) setError(err.message || 'לא הצלחנו לטעון את פרטי התיק.');
     } finally {
-      setLoading(false);
+      if (!soft) setLoading(false);
     }
   };
+
+  // When the SSE feed reports this case changed (status flip, evidence assets
+  // ready, or a direct Compass edit), pull the full detail again in the
+  // background so the page reflects it immediately.
+  useEffect(() => {
+    if (!liveCase) return;
+    const signature = `${liveCase.status || ''}:${liveCase.updatedAt || ''}`;
+    if (lastSyncedRef.current && signature !== lastSyncedRef.current) {
+      lastSyncedRef.current = signature;
+      fetchCase({ soft: true });
+    }
+  }, [liveCase?.status, liveCase?.updatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const enterInvestigation = (selectedSuspectName = '') => {
     navigate(`/game/${caseId}`, {
@@ -275,6 +296,28 @@ export default function BriefingPage() {
     return (
       <div className="briefing-shell briefing-shell--state">
         <InvestigationLoader label="טוען תדרוך מפקד..." />
+      </div>
+    );
+  }
+
+  // The case exists but the backend is still generating it. Keep the loader up
+  // for as long as the status stays 'generating' - no timeout, no false failure.
+  // The live-sync effect above swaps this for the real briefing the moment the
+  // status turns 'active'.
+  if (caseDoc && caseDoc.status === 'generating') {
+    return (
+      <div className="briefing-shell briefing-shell--state">
+        <InvestigationLoader label="המפקד מכין את התיק… זה יכול לקחת כמה דקות." />
+        <button className="briefing-back" onClick={() => navigate('/dashboard')}>חזור לחדר המבצעים</button>
+      </div>
+    );
+  }
+
+  if (caseDoc && caseDoc.status === 'failed') {
+    return (
+      <div className="briefing-shell briefing-shell--state">
+        <p>יצירת התיק נכשלה. אפשר לפתוח תיק חדש מחדר המבצעים.</p>
+        <button className="briefing-back" onClick={() => navigate('/dashboard')}>חזור לחדר המבצעים</button>
       </div>
     );
   }

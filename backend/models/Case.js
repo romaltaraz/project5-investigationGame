@@ -93,6 +93,18 @@ const evidenceSchema = new mongoose.Schema({
   assetStatus: { type: String, enum: ['ready', 'missing'], default: 'missing' },
   assetGeneratedAt: Date,
   assetTranscript: String,
+  // Automatic-retry bookkeeping for the evidence-generation pipeline (see
+  // caseNeedsEvidenceAssets/ensureCaseEvidenceAssets in routes/cases.js).
+  // assetStatus stays exactly 'ready' | 'missing' - these are orthogonal
+  // metadata, not a third status: assetAttempts bounds how many times
+  // automatic generation is allowed to retry a permanently-failing item
+  // (NVIDIA/FLUX/ElevenLabs errors) before giving up, which is what stops
+  // a stuck case from regenerating forever on every case fetch. All three
+  // are optional/additive - existing evidence without them behaves as
+  // assetAttempts=0 (never automatically attempted).
+  assetAttempts: { type: Number, default: 0 },
+  assetLastAttemptAt: Date,
+  assetError: String,
 
   // ── Evidence blueprint (structured, optional, backward-compatible) ──
   // מטרת הראיה, הרמז המשני, המעורבים והזמן — נשלטים תמיד מתוך נתוני התיק
@@ -118,6 +130,14 @@ const evidenceSchema = new mongoose.Schema({
   // ע"י FLUX, לא כפול כאן). מיועד ל-buildImagePrompt(evidence, caseData)
   // עתידי שישלב: appearanceProfile + visualDetails + location + time + primaryClue.
   visualDetails: [String],
+  // תיאור חזותי עובדתי באנגלית של מה שאמור להיראות בתמונה (ראיות photo בלבד).
+  // נוצר ע"י אותה קריאת LLM שמייצרת את שאר שדות הראיה - לא קריאה נוספת, לא
+  // מודל תרגום. זהו הייצוג החזותי של primaryClue (שנשאר הרמז הלוגי/חקירתי),
+  // מנוסח כתיאור קונקרטי של מה נראה/מי נוכח/יחסים במרחב - בלי מסקנות, בלי
+  // הסברים, בלי שפת מצלמה/סגנון. אופציונלי: ראיות ישנות בלי השדה ממשיכות
+  // לעבוד עם ה-fallback הקיים ב-buildImagePrompt (עוגני-סביבה + שדות עברית).
+  // שרת-בלבד, בדיוק כמו primaryClue/hiddenClue (ראה serializeEvidenceForClient).
+  visualPromptEn: String,
   // פרופיל קול לכל דמות שמדברת בראיה הזו (בעיקר recording/message), נגזר
   // תמיד מ-suspect.voiceProfile הקיים - אף פעם לא ממציא פרופיל חדש. מיועד
   // לצריכה ע"י TTS עתידי.

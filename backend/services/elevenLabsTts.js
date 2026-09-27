@@ -25,7 +25,7 @@
 const TTS_BASE_URL = 'https://api.elevenlabs.io/v1/text-to-speech';
 const VOICES_URL = 'https://api.elevenlabs.io/v2/voices';
 
-const SAMPLE_RATE = 24000;
+export const SAMPLE_RATE = 24000;
 const BITS_PER_SAMPLE = 16;
 const NUM_CHANNELS = 1;
 const BYTES_PER_SAMPLE = BITS_PER_SAMPLE / 8;
@@ -37,7 +37,7 @@ const BYTES_PER_SECOND = SAMPLE_RATE * NUM_CHANNELS * BYTES_PER_SAMPLE;
 // into actual vocal performance without ever showing the label to the player.
 const MODEL_ID = 'eleven_v3';
 const REQUEST_TIMEOUT_MS = 60000;
-const DEFAULT_PAUSE_MS = 450;
+export const DEFAULT_PAUSE_MS = 450;
 
 const EMOTION_TAGS = {
   neutral: '',
@@ -59,7 +59,7 @@ const PACE_SPEED = {
 
 let cachedVoices = null; // fetched once per process, reused for every character/turn
 
-const hashName = (name = '') => `${name}`
+export const hashName = (name = '') => `${name}`
   .split('')
   .reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) >>> 0, 11);
 
@@ -163,14 +163,14 @@ const synthesizeTurnPcm = async ({ text, voiceId, emotion, pace, apiKey }) => {
 };
 
 // Zero-filled PCM of an exact duration = true silence, sample-accurate.
-const buildSilencePcm = (durationMs) => {
+export const buildSilencePcm = (durationMs) => {
   const numSamples = Math.max(0, Math.round((durationMs / 1000) * SAMPLE_RATE));
   return Buffer.alloc(numSamples * BYTES_PER_SAMPLE * NUM_CHANNELS);
 };
 
-const pcmDurationSeconds = (buffer) => buffer.length / BYTES_PER_SECOND;
+export const pcmDurationSeconds = (buffer) => buffer.length / BYTES_PER_SECOND;
 
-const buildWavHeader = (dataLength) => {
+export const buildWavHeader = (dataLength) => {
   const header = Buffer.alloc(44);
   header.write('RIFF', 0, 'ascii');
   header.writeUInt32LE(36 + dataLength, 4);
