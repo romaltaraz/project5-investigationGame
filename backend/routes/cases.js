@@ -1,6 +1,7 @@
 // routes/cases.js
 import express from 'express';
 import mongoose from 'mongoose';
+import { performance } from 'perf_hooks';
 import Case from '../models/Case.js';
 import User from '../models/User.js';
 import { authenticateToken } from '../middleware/auth.js';
@@ -597,6 +598,16 @@ router.post('/generate', authenticateToken, async (req, res) => {
 // instead of leaving it stuck on the loading screen forever. Every state change
 // reaches the browser through the change-stream feed.
 async function generateCaseInBackground({ reservedId, userId, difficulty, commanderPersonality, recentSignatures }) {
+  // Stage 2 diagnostic instrumentation only - measures where time goes during
+  // generation, does not change any AI call/behavior/Promise.all structure.
+  const genStart = performance.now();
+  const logTiming = (stage, start, extra = '') => {
+    const ms = Math.round(performance.now() - start);
+    console.log(`⏱️ [CASE GENERATION] case=${reservedId} ${stage}=${ms}ms (${(ms / 1000).toFixed(2)}s)${extra}`);
+    return ms;
+  };
+  console.log(`⏱️ [CASE GENERATION] case=${reservedId} START`);
+
   try {
     const openai = new OpenAI({
       apiKey: process.env.NVIDIA_API_KEY,
@@ -609,6 +620,7 @@ async function generateCaseInBackground({ reservedId, userId, difficulty, comman
     החזר רק JSON תקין ללא טקסט נוסף.`;
 
     const runSection = async (label, prompt) => {
+      const sectionStart = performance.now();
       try {
         // Most section builders (commander/briefing/suspects/evidence) return a
         // plain string user prompt, paired with the generic SYSTEM_PROMPT above.
@@ -629,8 +641,16 @@ async function generateCaseInBackground({ reservedId, userId, difficulty, comman
         });
 
         const raw = aiResponse.choices?.[0]?.message?.content || '';
-        return parseAiCasePayload(raw);
+        const usage = aiResponse.usage;
+        const finishReason = aiResponse.choices?.[0]?.finish_reason;
+        const usageExtra = usage
+          ? ` prompt_tokens=${usage.prompt_tokens} completion_tokens=${usage.completion_tokens} total_tokens=${usage.total_tokens} finish_reason=${finishReason}`
+          : '';
+        const parsed = parseAiCasePayload(raw);
+        logTiming(label, sectionStart, usageExtra);
+        return parsed;
       } catch (sectionError) {
+        logTiming(label, sectionStart, ' status=failed');
         console.error(`⚠️ AI section "${label}" failed, will fall back:`, sectionError.message);
         return null;
       }
@@ -664,9 +684,12 @@ async function generateCaseInBackground({ reservedId, userId, difficulty, comman
     let skeleton = null;
     const premise = await runSection('premise', buildCasePremisePrompt(difficulty, recentSignatures));
     if (premise) {
+      const skeletonStart = performance.now();
       try {
         skeleton = buildSkeletonFromPremise(premise);
+        logTiming('premise-skeleton', skeletonStart);
       } catch (skeletonError) {
+        logTiming('premise-skeleton', skeletonStart, ' status=failed');
         console.error('⚠️ Failed to build skeleton from AI premise, falling back to template skeleton:', skeletonError.message);
         skeleton = null;
       }
@@ -675,12 +698,18 @@ async function generateCaseInBackground({ reservedId, userId, difficulty, comman
     // גיבוי מקומי וזול (בלי קריאת AI נוספת לשיפוט) - אם התעלומה שחזרה עדיין דומה
     // מדי לתיקים האחרונים של המשתמש, ניסיון חוזר אחד בלבד עם הנחיה נחרצת יותר.
     // לעולם לא חוסם את יצירת התיק - אם גם הניסיון החוזר נכשל, ממשיכים עם מה שיש.
-    if (skeleton && recentSignatures.some((entry) => conceptSignatureCollides(entry.conceptSignature, skeleton.conceptSignature))) {
+    const collisionCheckStart = performance.now();
+    const collides = Boolean(skeleton) && recentSignatures.some((entry) => conceptSignatureCollides(entry.conceptSignature, skeleton.conceptSignature));
+    logTiming('premise-collision-check', collisionCheckStart, collides ? ' collided=true' : ' collided=false');
+    if (collides) {
       const retryPremise = await runSection('premise-retry', buildCasePremisePrompt(difficulty, recentSignatures, true));
       if (retryPremise) {
+        const retrySkeletonStart = performance.now();
         try {
           skeleton = buildSkeletonFromPremise(retryPremise);
+          logTiming('premise-retry-skeleton', retrySkeletonStart);
         } catch (retryError) {
+          logTiming('premise-retry-skeleton', retrySkeletonStart, ' status=failed');
           console.error('⚠️ Failed to build skeleton from retried AI premise, keeping previous premise:', retryError.message);
         }
       }
@@ -692,12 +721,14 @@ async function generateCaseInBackground({ reservedId, userId, difficulty, comman
 
     // עד 4 קריאות AI במקביל, כל אחת מייצרת חלק אחר וקטן יותר של התיק על בסיס אותו שלד -
     // מקצר משמעותית את זמן ההמתנה הכולל לעומת קריאה אחת גדולה שמייצרת הכול ברצף.
+    const parallelSectionsStart = performance.now();
     const [commanderResult, briefingResult, suspectsResult, evidenceResult] = await Promise.all([
-      runSection('commander/backstory', buildCommanderAndBackstoryPrompt(skeleton, difficulty, commanderPersonality)),
-      runSection('briefingDetails', buildBriefingDetailsPrompt(skeleton, difficulty)),
-      runSection('suspects', buildSuspectsDetailPrompt(skeleton, difficulty)),
-      runSection('evidence', buildEvidencePrompt(skeleton, difficulty)),
+      runSection('section commander/backstory', buildCommanderAndBackstoryPrompt(skeleton, difficulty, commanderPersonality)),
+      runSection('section briefingDetails', buildBriefingDetailsPrompt(skeleton, difficulty)),
+      runSection('section suspects', buildSuspectsDetailPrompt(skeleton, difficulty)),
+      runSection('section evidence', buildEvidencePrompt(skeleton, difficulty)),
     ]);
+    logTiming('parallel-sections-total', parallelSectionsStart);
 
     const mergedSuspects = skeleton.baseSuspects.map((suspect, index) => ({
       ...suspect,
@@ -724,24 +755,30 @@ async function generateCaseInBackground({ reservedId, userId, difficulty, comman
       evidence: evidenceResult?.evidence,
     };
 
+    const normalizeStart = performance.now();
     const normalizedCase = normalizeCaseData(caseData, difficulty, commanderPersonality, fallback);
+    logTiming('normalization', normalizeStart);
 
     // Correction-only Hebrew QA over each suspect's alibi text specifically
     // (not a general narrative rewrite - see applySuspectAlibiHebrewQa).
     // Best-effort: runHebrewQa already falls back to the original alibi on
     // any failure, but the whole step is wrapped too so a Promise.all
     // rejection here can never block case creation.
+    const alibiQaStart = performance.now();
     try {
       normalizedCase.suspects = await applySuspectAlibiHebrewQa({
         generateAiText, suspects: normalizedCase.suspects,
       });
+      logTiming('alibi-qa', alibiQaStart);
     } catch (alibiQaError) {
+      logTiming('alibi-qa', alibiQaStart, ' status=failed');
       console.error('⚠️ Suspect alibi Hebrew QA failed, keeping original alibi text:', alibiQaError.message);
     }
 
     // מעדכנים את אותו מסמך שהוזמן מראש (לא יוצרים תיק שני!) ומעבירים אותו לסטטוס 'active'.
     // reservedId כבר נמצא ב-User.activeCases מההזמנה האטומית ב-POST /generate, אז אין
     // צורך בעדכון נוסף על המשתמש כאן.
+    const finalSaveStart = performance.now();
     const newCase = await Case.findByIdAndUpdate(
       reservedId,
       {
@@ -784,8 +821,10 @@ async function generateCaseInBackground({ reservedId, userId, difficulty, comman
     if (!newCase) {
       throw new Error('התיק השמור מראש לא נמצא בעדכון הסופי');
     }
+    logTiming('final-save', finalSaveStart);
     // status is now 'active' - the change stream pushes this to the browser,
     // which swaps the loading UI for the finished case with no refresh.
+    logTiming('TOTAL_TO_ACTIVE', genStart);
     console.log('✅ Case generated (background):', newCase._id);
 
     // יצירת נכסי ראיות ברקע — לא חוסם את התגובה. עדכון ה-evidence כשמסתיים
@@ -809,6 +848,7 @@ async function generateCaseInBackground({ reservedId, userId, difficulty, comman
     });
 
   } catch (error) {
+    logTiming('TOTAL_TO_ACTIVE', genStart, ' status=failed');
     console.error('❌ Background case generation failed:', error.message);
     if (error.name === 'ValidationError') {
       console.error('Mongoose validation:', JSON.stringify(error.errors, null, 2));
