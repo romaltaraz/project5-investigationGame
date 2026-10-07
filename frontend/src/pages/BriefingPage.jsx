@@ -281,7 +281,7 @@ export default function BriefingPage() {
     }
 
     if (viewerType === 'document') {
-      return <iframe className="briefing-viewer__frame" src={assetUrl} title={item.description || 'קובץ ראיה'} />;
+      return <iframe className="briefing-viewer__frame" src={assetUrl} title={item.description || 'קובץ ראיה'} sandbox="allow-scripts" />;
     }
 
     return (

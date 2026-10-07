@@ -841,7 +841,7 @@ export default function GamePage() {
                 className="image-lightbox__frame"
                 src={evidenceViewer.src}
                 title={evidenceViewer.alt || 'קובץ ראיה'}
-                sandbox="allow-scripts allow-same-origin"
+                sandbox="allow-scripts"
               />
             )}
 

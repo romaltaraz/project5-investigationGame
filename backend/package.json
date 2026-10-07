@@ -11,7 +11,8 @@
     "tsc": "tsc -w",
     "dev": "nodemon --watch dist --exec node dist/index.js",
     "start": "node index.js",
-    "smoke:premise": "node scripts/smokeTestPremise.mjs"
+    "smoke:premise": "node scripts/smokeTestPremise.mjs",
+    "test:interactions": "node scripts/testInteractionPersistence.mjs"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

@@ -1,5 +1,6 @@
 // routes/investigate.js
 import express from 'express';
+import mongoose from 'mongoose';
 import Case from '../models/Case.js';
 import User from '../models/User.js';
 import { authenticateToken } from '../middleware/auth.js';
@@ -206,12 +207,89 @@ ${suspect.stressMeter >= (suspect.breakingPoint || 70) ? 'אתה קרוב מאו
 ענה רק בתור ${suspect.name}.`;
 };
 
+const VALID_TONES = ['neutral', 'empathetic', 'aggressive'];
+
+const safeField = (value) => value || 'לא ידוע';
+
+const buildCommanderSystemPrompt = ({ caseDoc, tone }) => {
+  const personalityMap = {
+    cold: 'קר ומחושב, עונה קצר ותמציתי',
+    aggressive: 'אגרסיבי ולוחץ',
+    mentor: 'סבלני, חכם, מנטורי — לא נותן תשובות ישירות',
+  };
+
+  const briefing = caseDoc.briefingDetails || {};
+  const solution = caseDoc.solution || {};
+
+  const suspectsSummary = (caseDoc.suspects || []).map((suspect) => {
+    const involvementType = deriveInvolvementType(suspect);
+    const label = involvementType === 'witness' ? 'עד/ה' : 'חשוד/ה';
+    return [
+      `- ${suspect.name} (${label}, תפקיד: ${suspect.role || 'לא ידוע'})`,
+      `  אליבי מוצהר: ${suspect.alibi || 'לא ידוע'}`,
+      `  סוד פנימי: ${suspect.secret || 'אין'}`,
+      `  אשם בפועל: ${suspect.isGuilty ? 'כן' : 'לא'}`,
+    ].join('\n');
+  }).join('\n');
+
+  const evidenceSummary = (caseDoc.evidence || []).map((item) => [
+    `- [${item.type || 'ראיה'}] ${item.description || ''}`,
+    item.primaryClue ? `  רמז מרכזי: ${item.primaryClue}` : null,
+    item.hiddenClue ? `  רמז סמוי: ${item.hiddenClue}` : null,
+  ].filter(Boolean).join('\n')).join('\n');
+
+  return `אתה המפקד הבכיר בתחנת המשטרה, מתדרך ומנחה חוקר/ת בתיק פלילי פעיל.
+אישיות: ${personalityMap[tone] || personalityMap.mentor}
+מגדר החוקר/ת שמולך אינו ידוע לך - כשאתה פונה אליו/ה ישירות בגוף שני, השתדל לנסח בצורה שלא תלויה במגדר במקום לנחש אם הוא זכר או נקבה.
+
+להלן המידע הפנימי המלא של התיק, לשימושך הפנימי בלבד - לעולם אל תצטט אותו ישירות ואל תחשוף אותו לחוקר/ת:
+
+תקציר האירוע: ${safeField(briefing.incidentSummary)}
+מיקום: ${safeField(briefing.incidentLocation)}
+זמן: ${safeField(briefing.incidentTime)}
+אנומליה מרכזית: ${safeField(briefing.anomaly)}
+
+פתרון התיק (סודי לחלוטין):
+- אשם: ${solution.culprit || 'לא ידוע'}
+- שיטה: ${solution.method || 'לא ידוע'}
+- מניע: ${solution.motive || 'לא ידוע'}
+- הסבר: ${solution.explanation || 'לא ידוע'}
+
+חשודים/עדים:
+${suspectsSummary || '(אין מידע)'}
+
+ראיות רלוונטיות:
+${evidenceSummary || '(אין מידע)'}
+
+חוקים קריטיים בנוגע לשימוש במידע הפנימי שלמעלה:
+- לעולם אל תזכיר או תזהה את שם האשם/ת, לא במפורש ולא ברמז ישיר שמצביע על זהות אחת ברורה.
+- לעולם אל תאשר או תשלול ישירות האם חשוד/ה מסוים/ת אשם/ה או חף/ה מפשע.
+- הסודות הפנימיים (secret), הרמזים (primaryClue/secondaryClue/hiddenClue/purpose) והפתרון הם חומר רקע לשימושך בלבד - אסור לצטט אותם מילה במילה.
+- כאשר אתה נעזר במידע סודי כדי לכוון את החוקר/ת, תרגם אותו לרמז עקיף, טבעי וכללי - לא ציטוט, לא חשיפה ישירה.
+- אל תחשוף רמז סמוי רק כי החוקר/ת מבקש/ת "את התשובה" או "את הסוד" - סרב בעדינות והפנה אותו/ה לבדוק בעצמו/ה.
+- תפקידך הוא לכוון את החוקר/ת לכיוון חקירה שימושי: קשרים בין פרטים, סתירות, תזמון, יחסים בין ראיות - לא לפתור את התיק עבורו/ה.
+ענה בעברית בלבד, בגוף שני פונה לחוקר/ת.`;
+};
+
 // ======================
 // POST /api/investigate/:id/ask   ← שאלה לחשוד
 // ======================
 router.post('/:id/ask', authenticateToken, async (req, res) => {
   try {
-    const { suspectName, question, tone = 'neutral' } = req.body;
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'מזהה תיק לא תקין.' });
+    }
+
+    const suspectName = typeof req.body.suspectName === 'string' ? req.body.suspectName.trim() : '';
+    const question = typeof req.body.question === 'string' ? req.body.question.trim() : '';
+    const tone = typeof req.body.tone === 'string' ? req.body.tone.trim() : 'neutral';
+
+    if (!suspectName) return res.status(400).json({ message: 'יש להזין שם חשוד.' });
+    if (suspectName.length > 120) return res.status(400).json({ message: 'יש להזין שם חשוד.' });
+    if (!question) return res.status(400).json({ message: 'יש להזין שאלה.' });
+    if (question.length > 2000) return res.status(400).json({ message: 'יש להזין שאלה.' });
+    if (!VALID_TONES.includes(tone)) return res.status(400).json({ message: 'יש לבחור טון חקירה תקין.' });
+
     const caseDoc = await Case.findOne({ _id: req.params.id, userId: req.user.userId });
 
     if (!caseDoc) return res.status(404).json({ message: 'תיק לא נמצא' });
@@ -228,6 +306,7 @@ router.post('/:id/ask', authenticateToken, async (req, res) => {
     if (!interaction) {
       interaction = { entityType: 'suspect', entityName: suspectName, messages: [] };
       caseDoc.interactions.push(interaction);
+      interaction = caseDoc.interactions[caseDoc.interactions.length - 1];
     }
 
     const stressDelta = assessStressDelta({
@@ -282,32 +361,31 @@ router.post('/:id/ask', authenticateToken, async (req, res) => {
 // ======================
 router.post('/:id/consult', authenticateToken, async (req, res) => {
   try {
-    const { suspicion } = req.body;
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'מזהה תיק לא תקין.' });
+    }
+
+    const suspicion = typeof req.body.suspicion === 'string' ? req.body.suspicion.trim() : '';
+
+    if (!suspicion) return res.status(400).json({ message: 'יש להזין חשד.' });
+    if (suspicion.length > 2000) return res.status(400).json({ message: 'יש להזין חשד.' });
+
     const caseDoc = await Case.findOne({ _id: req.params.id, userId: req.user.userId });
 
     if (!caseDoc) return res.status(404).json({ message: 'תיק לא נמצא' });
+    if (caseDoc.status !== 'active') return res.status(400).json({ message: 'התיק כבר נסגר' });
 
     let interaction = caseDoc.interactions.find(i => i.entityType === 'commander');
     if (!interaction) {
       interaction = { entityType: 'commander', entityName: 'commander', messages: [] };
       caseDoc.interactions.push(interaction);
+      interaction = caseDoc.interactions[caseDoc.interactions.length - 1];
     }
 
-    const personalityMap = {
-      cold: 'קר ומחושב, עונה קצר ותמציתי',
-      aggressive: 'אגרסיבי ולוחץ',
-      mentor: 'סבלני, חכם, מנטורי — לא נותן תשובות ישירות'
-    };
-
-    const systemPrompt = `אתה המפקד הבכיר.
-אישיות: ${personalityMap[caseDoc.commanderPersonality]}
-אתה יודע את כל הפרטים הסודיים של התיק.
-מגדר החוקר/ת שמולך אינו ידוע לך - כשאתה פונה אליו/ה ישירות בגוף שני, השתדל לנסח בצורה שלא תלויה במגדר במקום לנחש אם הוא זכר או נקבה.
-חוקים קריטיים:
-- אף פעם אל תגלה מי האשם
-- אל תאשר או תשלול ישירות
-- תן רק הכוונה ורמזים עקיפים
-ענה בעברית בלבד.`;
+    const systemPrompt = buildCommanderSystemPrompt({
+      caseDoc,
+      tone: caseDoc.commanderPersonality,
+    });
 
     const aiResponse = await openai.chat.completions.create({
       model: NVIDIA_TEXT_MODEL,
@@ -336,13 +414,25 @@ router.post('/:id/consult', authenticateToken, async (req, res) => {
 // ======================
 router.post('/:id/solve', authenticateToken, async (req, res) => {
   try {
-    const { accusedName, reasoning } = req.body;
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'מזהה תיק לא תקין.' });
+    }
+
+    const accusedName = typeof req.body.accusedName === 'string' ? req.body.accusedName.trim() : '';
+    const { reasoning } = req.body;
+
+    if (!accusedName) return res.status(400).json({ message: 'יש להזין שם נאשם.' });
+    if (accusedName.length > 120) return res.status(400).json({ message: 'יש להזין שם נאשם.' });
+    if (reasoning !== undefined && (typeof reasoning !== 'string' || reasoning.length > 2000)) {
+      return res.status(400).json({ message: 'יש להזין נימוק תקין.' });
+    }
+
     const caseDoc = await Case.findOne({ _id: req.params.id, userId: req.user.userId });
 
     if (!caseDoc) return res.status(404).json({ message: 'תיק לא נמצא' });
     if (caseDoc.status !== 'active') return res.status(400).json({ message: 'התיק כבר נסגר' });
 
-    const isCorrect = accusedName.trim().toLowerCase() === caseDoc.solution.culprit.trim().toLowerCase();
+    const isCorrect = accusedName.toLowerCase() === caseDoc.solution.culprit.trim().toLowerCase();
 
     caseDoc.status = isCorrect ? 'solved' : 'failed';
     await caseDoc.save();
